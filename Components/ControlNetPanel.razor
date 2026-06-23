@@ -1,0 +1,317 @@
+@using Microsoft.AspNetCore.Components.Forms
+@inject ControlNetService CnService
+@inject IDialogService DialogService
+@implements IDisposable
+
+@* Single ControlNet unit editor. The enable/remove chrome lives in the parent ControlNetSection;
+   this is just the fields. *@
+<div>
+    @if (_loadError)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-2">
+            Couldn't reach the ControlNet API — make sure the ControlNet extension is enabled in reForge.
+        </MudAlert>
+    }
+
+    @* Control image *@
+    <div class="d-flex gap-3 flex-wrap align-start">
+        @* Fixed-width column so the preview caption wraps instead of widening the row and shoving the
+           buttons aside. *@
+        <div style="width:200px; flex:0 0 auto;">
+            @if (!string.IsNullOrEmpty(Unit.ImageB64))
+            {
+                <div style="position:relative; display:inline-block; line-height:0;">
+                    <MudImage Src="@($"data:image/png;base64,{(_previewB64 ?? Unit.ImageB64)}")"
+                              Class="cursor-pointer" @onclick="OpenFullscreen"
+                              Style="max-height:200px; max-width:100%; border-radius:8px;" ObjectFit="ObjectFit.Contain" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled"
+                                   Style="position:absolute; top:4px; right:4px;" OnClick="ClearImage" />
+                </div>
+                @if (_previewB64 != null)
+                {
+                    <MudText Typo="Typo.caption" Class="d-block" Style="text-align:center; white-space:normal; word-break:break-word;">Preprocessor preview (@Unit.Module)</MudText>
+                }
+            }
+            else
+            {
+                <div class="cn-drop"><MudIcon Icon="@Icons.Material.Filled.Image" /> <span>No control image</span></div>
+            }
+        </div>
+
+        <div class="d-flex flex-column gap-1">
+            <label class="cn-upload">
+                <MudIcon Icon="@Icons.Material.Filled.Upload" Size="Size.Small" />
+                <span>@(string.IsNullOrEmpty(Unit.ImageB64) ? "Upload control image" : "Replace image")</span>
+                <InputFile OnChange="OnFile" accept="image/*" style="display:none" />
+            </label>
+            @if (GetInitImage != null)
+            {
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.PhotoLibrary" OnClick="UseInit">Use init image</MudButton>
+            }
+            @if (!string.IsNullOrEmpty(Unit.ImageB64) && Unit.Module != "none")
+            {
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Visibility"
+                           OnClick="Preview" Disabled="_previewing">@(_previewing ? "Running…" : "Preview preprocessor")</MudButton>
+            }
+            @if (_previewB64 != null)
+            {
+                <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="@(() => { _previewB64 = null; })">Show original</MudButton>
+            }
+            @if (AllowMask)
+            {
+                <MudTooltip Text="Feed the mask you painted in the Inpaint section to this unit — for inpaint ControlNet models. Needs Inpaint mode on with a painted mask.">
+                    <MudCheckBox T="bool" Value="Unit.UsePaintedMask" ValueChanged="@(v => Set(() => Unit.UsePaintedMask = v))" Dense="true" Label="Use painted inpaint mask" />
+                </MudTooltip>
+            }
+        </div>
+    </div>
+
+    @* Type / preprocessor / model *@
+    <MudGrid Class="mt-1" Spacing="2">
+        <MudItem xs="12" sm="4">
+            <MudSelect T="string" Label="Control type" Value="Unit.ControlType" ValueChanged="OnTypeChanged"
+                       Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined">
+                @foreach (var k in _types.Keys) { <MudSelectItem Value="@k">@k</MudSelectItem> }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudSelect T="string" Label="Preprocessor" Value="Unit.Module" ValueChanged="OnModuleChanged"
+                       Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined">
+                @foreach (var m in CurrentModules) { <MudSelectItem Value="@m">@m</MudSelectItem> }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudSelect T="string" Label="Model" Value="Unit.Model" ValueChanged="OnModelChanged"
+                       Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined">
+                @foreach (var m in CurrentModels) { <MudSelectItem Value="@m">@m</MudSelectItem> }
+            </MudSelect>
+        </MudItem>
+    </MudGrid>
+
+    @* Core controls *@
+    <MudSlider T="double" Min="0" Max="2" Step="0.05" Value="Unit.Weight" ValueChanged="@(v => Set(() => Unit.Weight = v))" Class="mt-1">
+        Control weight: @Unit.Weight.ToString("0.00")
+    </MudSlider>
+    <div class="d-flex gap-3 flex-wrap">
+        <MudSlider T="double" Min="0" Max="1" Step="0.01" Value="Unit.GuidanceStart" ValueChanged="@(v => Set(() => Unit.GuidanceStart = v))" Style="width:200px;">
+            Start step: @Unit.GuidanceStart.ToString("0.00")
+        </MudSlider>
+        <MudSlider T="double" Min="0" Max="1" Step="0.01" Value="Unit.GuidanceEnd" ValueChanged="@(v => Set(() => Unit.GuidanceEnd = v))" Style="width:200px;">
+            End step: @Unit.GuidanceEnd.ToString("0.00")
+        </MudSlider>
+    </div>
+
+    <MudGrid Spacing="2" Class="mt-1">
+        <MudItem xs="12" sm="6">
+            <MudSelect T="int" Label="Control mode" Value="Unit.ControlMode" ValueChanged="@(v => Set(() => Unit.ControlMode = v))"
+                       Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined">
+                <MudSelectItem T="int" Value="0">Balanced</MudSelectItem>
+                <MudSelectItem T="int" Value="1">My prompt is more important</MudSelectItem>
+                <MudSelectItem T="int" Value="2">ControlNet is more important</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="6">
+            <MudSelect T="int" Label="Resize mode" Value="Unit.ResizeMode" ValueChanged="@(v => Set(() => Unit.ResizeMode = v))"
+                       Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined">
+                <MudSelectItem T="int" Value="0">Just resize</MudSelectItem>
+                <MudSelectItem T="int" Value="1">Crop and resize</MudSelectItem>
+                <MudSelectItem T="int" Value="2">Resize and fill</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+    </MudGrid>
+
+    <div class="d-flex gap-4 flex-wrap mt-1">
+        <MudCheckBox T="bool" Value="Unit.PixelPerfect" ValueChanged="@(v => Set(() => Unit.PixelPerfect = v))" Dense="true" Label="Pixel perfect" />
+        <MudCheckBox T="bool" Value="Unit.LowVram" ValueChanged="@(v => Set(() => Unit.LowVram = v))" Dense="true" Label="Low VRAM" />
+    </div>
+
+    @* Advanced preprocessor params — driven by the backend's per-module slider config when available. *@
+    <MudExpansionPanels Class="mt-1">
+        <MudExpansionPanel Text="Advanced (preprocessor)">
+            @{ var sl = CurrentModuleSliders; }
+            @if (!sl.Any(s => s != null))
+            {
+                <MudText Typo="Typo.caption">This preprocessor has no adjustable parameters.</MudText>
+            }
+            else
+            {
+                @if (sl.Count > 0 && sl[0] is { } r)
+                {
+                    <MudSlider T="int" Min="@((int)r.min)" Max="@((int)r.max)" Step="@(Math.Max(1, (int)r.step))" Value="Unit.ProcessorRes" ValueChanged="@(v => Set(() => Unit.ProcessorRes = v))">
+                        @(r.name ?? "Preprocessor resolution"): @Unit.ProcessorRes
+                    </MudSlider>
+                }
+                @if (sl.Count > 1 && sl[1] is { } a)
+                {
+                    <MudSlider T="int" Min="@((int)a.min)" Max="@((int)a.max)" Step="@(Math.Max(1, (int)a.step))" Value="Unit.ThresholdA" ValueChanged="@(v => Set(() => Unit.ThresholdA = v))">
+                        @(a.name ?? "Threshold A"): @Unit.ThresholdA
+                    </MudSlider>
+                }
+                @if (sl.Count > 2 && sl[2] is { } b)
+                {
+                    <MudSlider T="int" Min="@((int)b.min)" Max="@((int)b.max)" Step="@(Math.Max(1, (int)b.step))" Value="Unit.ThresholdB" ValueChanged="@(v => Set(() => Unit.ThresholdB = v))">
+                        @(b.name ?? "Threshold B"): @Unit.ThresholdB
+                    </MudSlider>
+                }
+            }
+            <MudText Typo="Typo.caption">Pixel perfect overrides the resolution to match the output size.</MudText>
+        </MudExpansionPanel>
+    </MudExpansionPanels>
+</div>
+
+@code {
+    [Parameter] public ControlNetUnit Unit { get; set; } = new();
+    [Parameter] public HttpClient Http { get; set; } = default!;
+    [Parameter] public EventCallback OnChanged { get; set; }
+    /// <summary>img2img supplies the init image so the user can one-click reuse it as the control image.</summary>
+    [Parameter] public Func<string?>? GetInitImage { get; set; }
+    /// <summary>img2img: show the "use painted inpaint mask" option (the mask is injected at gen time).</summary>
+    [Parameter] public bool AllowMask { get; set; }
+
+    private Dictionary<string, ControlTypeInfo> _types = new() { ["All"] = new() };
+    private Dictionary<string, CnModuleDetail> _moduleDetail = new();
+    private bool _loaded, _loadError, _previewing;
+    private string? _previewB64;
+
+    private List<string> CurrentModules =>
+        _types.TryGetValue(Unit.ControlType, out var t) && t.module_list.Count > 0 ? t.module_list : new() { "none" };
+    private List<string> CurrentModels =>
+        _types.TryGetValue(Unit.ControlType, out var t) && t.model_list.Count > 0 ? t.model_list : new() { "None" };
+
+    // Positional slider config for the current preprocessor ([0] res, [1] threshold_a, [2] threshold_b).
+    // Uses the backend's real labels/ranges when known; "none" has no params; otherwise a generic fallback.
+    private static readonly List<CnSlider?> _genericSliders = new()
+    {
+        new CnSlider { name = "Preprocessor resolution", min = 64, max = 2048, step = 64, value = 512 },
+        new CnSlider { name = "Threshold A", min = 0, max = 255, step = 1, value = 64 },
+        new CnSlider { name = "Threshold B", min = 0, max = 255, step = 1, value = 64 },
+    };
+    private List<CnSlider?> CurrentModuleSliders =>
+        Unit.Module == "none" ? new()
+        : _moduleDetail.TryGetValue(Unit.Module, out var d) ? d.sliders
+        : _genericSliders;
+
+    protected override async Task OnInitializedAsync()
+    {
+        CnService.Changed += OnServiceChanged;
+        await EnsureLoaded();
+    }
+
+    public void Dispose() => CnService.Changed -= OnServiceChanged;
+
+    // The discovery cache was invalidated (e.g. the LoRA page reloaded models after a download) —
+    // re-fetch so newly installed ControlNet models appear without restarting the app.
+    private async void OnServiceChanged()
+    {
+        _loaded = false;
+        _loadError = false;
+        await InvokeAsync(EnsureLoaded);
+    }
+
+    private async Task EnsureLoaded()
+    {
+        if (_loaded) return;
+        _loaded = true;
+        _types = await CnService.GetTypesAsync(Http);
+        _moduleDetail = await CnService.GetModuleDetailAsync(Http);
+        if (_types.Count == 0) { _loadError = true; _types = new() { ["All"] = new() }; }
+        if (!_types.ContainsKey(Unit.ControlType)) Unit.ControlType = _types.Keys.First();
+        StateHasChanged();
+    }
+
+    // Seed the resolution/threshold fields from the preprocessor's defaults when the user picks a new
+    // module/type (but not on load, so saved preset values are preserved).
+    private void ApplyModuleDefaults()
+    {
+        var sl = CurrentModuleSliders;
+        if (sl.Count > 0 && sl[0] is { } r) Unit.ProcessorRes = (int)r.value;
+        if (sl.Count > 1 && sl[1] is { } a) Unit.ThresholdA = (int)a.value;
+        if (sl.Count > 2 && sl[2] is { } b) Unit.ThresholdB = (int)b.value;
+    }
+
+    private async Task OnTypeChanged(string type)
+    {
+        Unit.ControlType = type;
+        if (_types.TryGetValue(type, out var t))
+        {
+            Unit.Module = !string.IsNullOrEmpty(t.default_option) ? t.default_option : (t.module_list.FirstOrDefault() ?? "none");
+            Unit.Model = !string.IsNullOrEmpty(t.default_model) ? t.default_model : (t.model_list.FirstOrDefault() ?? "None");
+        }
+        ApplyModuleDefaults();
+        _previewB64 = null;
+        await Notify();
+    }
+
+    private async Task OnModuleChanged(string module) { Unit.Module = module; ApplyModuleDefaults(); _previewB64 = null; await Notify(); }
+    private async Task OnModelChanged(string model) { Unit.Model = model; await Notify(); }
+
+    private async Task OnFile(InputFileChangeEventArgs e)
+    {
+        using var ms = new MemoryStream();
+        await e.File.OpenReadStream(50 * 1024 * 1024).CopyToAsync(ms);
+        Unit.ImageB64 = Convert.ToBase64String(ms.ToArray());
+        _previewB64 = null;
+        await Notify();
+    }
+
+    private async Task UseInit()
+    {
+        var b = GetInitImage?.Invoke();
+        if (!string.IsNullOrEmpty(b)) { Unit.ImageB64 = b; _previewB64 = null; await Notify(); }
+    }
+
+    private async Task ClearImage() { Unit.ImageB64 = null; _previewB64 = null; await Notify(); }
+
+    private async Task Preview()
+    {
+        if (string.IsNullOrEmpty(Unit.ImageB64)) return;
+        _previewing = true; StateHasChanged();
+        _previewB64 = await CnService.DetectAsync(Http, Unit.Module, Unit.ImageB64, Unit.ProcessorRes, Unit.ThresholdA, Unit.ThresholdB);
+        _previewing = false; StateHasChanged();
+    }
+
+    // Open the control image (or its preprocessor preview, if shown) in the fullscreen viewer. The image
+    // is parked in the result store and shown via /results/file — the same proven path result/A-B images
+    // use — so large in-memory images display reliably (a raw base64 of a full-size image doesn't).
+    private async Task OpenFullscreen()
+    {
+        var b64 = _previewB64 ?? Unit.ImageB64;
+        if (string.IsNullOrEmpty(b64)) return;
+        string? id = null;
+        try { id = await Task.Run(() => SimpleDiffusion.Infrastructure.GalleryServer.SaveResult(b64)); } catch { }
+        var src = id != null ? $"/results/file?id={id}" : $"data:image/png;base64,{b64}";
+        await ImageLightbox.ShowAsync(DialogService, new List<string> { src });
+    }
+
+    private async Task Set(Action mutate) { mutate(); await Notify(); }
+    private Task Notify() { StateHasChanged(); return OnChanged.InvokeAsync(); }
+}
+
+<style>
+    .cn-upload {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border: 1px solid var(--mud-palette-primary);
+        color: var(--mud-palette-primary);
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.8125rem;
+        font-weight: 500;
+        white-space: nowrap;
+    }
+
+    .cn-drop {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 100px;
+        width: 160px;
+        justify-content: center;
+        border: 1px dashed var(--mud-palette-lines-default);
+        border-radius: 8px;
+        color: var(--mud-palette-text-secondary);
+        font-size: 0.8rem;
+    }
+</style>

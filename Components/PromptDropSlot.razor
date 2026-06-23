@@ -1,0 +1,9 @@
+@* A thin insertion point between chips. Drag interaction is driven entirely by the JS pointer
+   engine (window.sdRearrange), which reads these data attributes and highlights via CSS. *@
+
+<div class="rearrange-slot" data-slot-parent="@Parent.Id" data-slot-index="@Index"></div>
+
+@code {
+    [Parameter] public PromptNode Parent { get; set; } = default!;
+    [Parameter] public int Index { get; set; }
+}

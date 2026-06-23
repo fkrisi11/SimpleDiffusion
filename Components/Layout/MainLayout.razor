@@ -1,0 +1,240 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject NavigationManager Navigation
+@inject IDialogService DialogService
+@inject SimpleDiffusion.Components.Services.UiPreferences Prefs
+@inject SimpleDiffusion.Components.Services.WorkspaceState Workspace
+
+<MudThemeProvider Theme="@_theme" IsDarkMode="_isDarkMode" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+<MudLayout>
+    <MudAppBar Elevation="1">
+        <MudText Typo="Typo.h5" Class="ml-3" style="cursor: pointer;" @onclick="@(() => Navigation.NavigateTo("/"))">Simple Diffusion</MudText>
+        <MudSpacer />
+        <MudIconButton Icon="@Icons.Material.Filled.HelpOutline" Color="Color.Inherit" title="Help for the current tab" OnClick="OpenHelpAsync" />
+        <MudIconButton Icon="@Icons.Material.Filled.Settings" Color="Color.Inherit" OnClick="OpenSettingsAsync" />
+        <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
+            <ActivatorContent>
+                <MudIconButton Icon="@DarkLightModeButtonIcon" Color="Color.Inherit" title="Theme" />
+            </ActivatorContent>
+            <ChildContent>
+                <MudMenuItem Icon="@Icons.Material.Outlined.DarkMode" OnClick='@(() => SetTheme("Dark"))'>Dark</MudMenuItem>
+                <MudMenuItem Icon="@Icons.Material.Filled.Bedtime" OnClick='@(() => SetTheme("Amoled"))'>AMOLED black</MudMenuItem>
+                <MudMenuItem Icon="@Icons.Material.Rounded.LightMode" OnClick='@(() => SetTheme("Light"))'>Light</MudMenuItem>
+            </ChildContent>
+        </MudMenu>
+    </MudAppBar>
+    <MudMainContent Class="pt-16 pa-4">
+        @Body
+    </MudMainContent>
+</MudLayout>
+
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    private bool _isDarkMode = true;
+    private MudTheme? _theme = null;
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        ApplyTheme();                  // default until per-device prefs load
+        Prefs.Changed += OnPrefsChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await Prefs.EnsureLoadedAsync(); // loads ThemeMode; fires Changed -> re-applies the theme
+
+            // First run on this device: walk the user through the essential setup. The host-side
+            // server / model-folder step is only offered on the machine hosting the app (localhost);
+            // remote LAN devices just set their own per-device preferences.
+            if (!Prefs.OnboardingCompleted)
+            {
+                bool isLocal = SimpleDiffusion.Components.Civitai.CivitaiClientHelpers.IsLocalClient(Navigation);
+
+                var parameters = new DialogParameters<SimpleDiffusion.Components.OnboardingDialog>
+                {
+                    { x => x.IncludeServerSetup, isLocal }
+                };
+                var options = new DialogOptions
+                {
+                    MaxWidth = MaxWidth.Small,
+                    FullWidth = true,
+                    CloseOnEscapeKey = false,
+                    BackdropClick = false
+                };
+                await DialogService.ShowAsync<SimpleDiffusion.Components.OnboardingDialog>("", parameters, options);
+            }
+        }
+    }
+
+    public void Dispose() => Prefs.Changed -= OnPrefsChanged;
+
+    private void OnPrefsChanged() => InvokeAsync(() => { ApplyTheme(); StateHasChanged(); });
+
+    // Build the active MudTheme from the saved brightness + accent. AMOLED swaps in a pure-black
+    // dark palette; the accent recolours Primary on whichever palettes are active.
+    private void ApplyTheme()
+    {
+        var mode = Prefs.ThemeMode ?? "Dark";
+        _isDarkMode = !string.Equals(mode, "Light", StringComparison.OrdinalIgnoreCase);
+        var dark = string.Equals(mode, "Amoled", StringComparison.OrdinalIgnoreCase) ? _amoledPalette : _darkPalette;
+
+        var accent = string.IsNullOrWhiteSpace(Prefs.AccentColor) ? AppThemes.DefaultAccent : Prefs.AccentColor;
+        var secondary = string.IsNullOrWhiteSpace(Prefs.SecondaryColor) ? AppThemes.DefaultSecondary : Prefs.SecondaryColor;
+        ApplyColors(_lightPalette, accent, secondary);
+        ApplyColors(dark, accent, secondary);
+
+        _theme = new MudTheme
+        {
+            PaletteLight = _lightPalette,
+            PaletteDark = dark,
+            LayoutProperties = new LayoutProperties()
+        };
+    }
+
+    // Recolour a palette's Primary + Secondary (and matching hover/lighten shades) to the chosen colours.
+    private static void ApplyColors(MudBlazor.Palette p, string accent, string secondary)
+    {
+        p.Primary = accent;
+        p.PrimaryDarken = AppThemes.Shade(accent, 0.82);
+        p.PrimaryLighten = AppThemes.Shade(accent, 1.18);
+
+        p.Secondary = secondary;
+        p.SecondaryDarken = AppThemes.Shade(secondary, 0.82);
+        p.SecondaryLighten = AppThemes.Shade(secondary, 1.18);
+    }
+
+    private async Task SetTheme(string mode)
+    {
+        Prefs.ThemeMode = mode;
+        ApplyTheme();
+        StateHasChanged();
+        try { await JS_BuzzAsync(); } catch { }
+        await Prefs.SaveAsync();        // persist + notify (Changed -> OnPrefsChanged)
+    }
+
+    // Haptic tick on theme change (no-op if disabled / unsupported).
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+    private async Task JS_BuzzAsync() => await JS.InvokeVoidAsync("sdHaptic.buzz", 12);
+
+    private async Task OpenSettingsAsync()
+    {
+        var options = new DialogOptions
+        {
+            CloseOnEscapeKey = true,
+            MaxWidth = MaxWidth.Medium,
+            FullWidth = true,
+            CloseButton = true
+        };
+        // Hide the mobile bottom nav while the settings sheet is open (no-op on desktop — no nav there).
+        try { await JS.InvokeVoidAsync("document.documentElement.classList.add", "sd-settings-open"); } catch { }
+        try
+        {
+            var dialog = await DialogService.ShowAsync<SimpleDiffusion.Components.SettingsDialog>("Application Settings", options);
+            await dialog.Result;
+        }
+        finally
+        {
+            try { await JS.InvokeVoidAsync("document.documentElement.classList.remove", "sd-settings-open"); } catch { }
+        }
+    }
+
+    private async Task OpenHelpAsync()
+    {
+        var parameters = new DialogParameters<SimpleDiffusion.Components.HelpDialog> { { x => x.TabIndex, Workspace.ActiveTabIndex } };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true };
+        await DialogService.ShowAsync<SimpleDiffusion.Components.HelpDialog>("Help", parameters, options);
+    }
+
+    private readonly PaletteLight _lightPalette = new()
+    {
+        Black = "#110e2d",
+        AppbarText = "#424242",
+        AppbarBackground = "rgba(255,255,255,0.8)",
+        DrawerBackground = "#ffffff",
+        GrayLight = "#e8e8e8",
+        GrayLighter = "#f9f9f9",
+    };
+
+    private readonly PaletteDark _darkPalette = new()
+    {
+        Primary = "#7e6fff",
+        Surface = "#1e1e2d",
+        Background = "#1a1a27",
+        BackgroundGray = "#151521",
+        AppbarText = "#92929f",
+        AppbarBackground = "rgba(26,26,39,0.8)",
+        DrawerBackground = "#1a1a27",
+        ActionDefault = "#74718e",
+        ActionDisabled = "#9999994d",
+        ActionDisabledBackground = "#605f6d4d",
+        TextPrimary = "#b2b0bf",
+        TextSecondary = "#92929f",
+        TextDisabled = "#ffffff33",
+        DrawerIcon = "#92929f",
+        DrawerText = "#92929f",
+        GrayLight = "#2a2833",
+        GrayLighter = "#1e1e2d",
+        Info = "#4a86ff",
+        Success = "#3dcb6c",
+        Warning = "#ffb545",
+        Error = "#ff3f5f",
+        LinesDefault = "#33323e",
+        TableLines = "#33323e",
+        Divider = "#292838",
+        OverlayLight = "#1e1e2d80",
+    };
+
+    private readonly PaletteDark _amoledPalette = new()
+    {
+        Primary = "#7e6fff",
+        Surface = "#0a0a0a",        // cards: near-black so edges don't vanish on the true-black bg
+        Background = "#000000",     // large areas stay true black for the OLED power saving
+        BackgroundGray = "#000000",
+        AppbarText = "#92929f",
+        AppbarBackground = "rgba(0,0,0,0.9)",
+        DrawerBackground = "#000000",
+        ActionDefault = "#74718e",
+        ActionDisabled = "#9999994d",
+        ActionDisabledBackground = "#605f6d4d",
+        TextPrimary = "#cfcde0",
+        TextSecondary = "#92929f",
+        TextDisabled = "#ffffff33",
+        DrawerIcon = "#92929f",
+        DrawerText = "#92929f",
+        GrayLight = "#161616",
+        GrayLighter = "#0a0a0a",
+        Info = "#4a86ff",
+        Success = "#3dcb6c",
+        Warning = "#ffb545",
+        Error = "#ff3f5f",
+        LinesDefault = "#222222",
+        TableLines = "#222222",
+        Divider = "#161616",
+        OverlayLight = "#00000080",
+    };
+
+    public string DarkLightModeButtonIcon
+    {
+        get
+        {
+            var mode = Prefs.ThemeMode ?? "Dark";
+            if (string.Equals(mode, "Light", StringComparison.OrdinalIgnoreCase)) return Icons.Material.Rounded.LightMode;
+            if (string.Equals(mode, "Amoled", StringComparison.OrdinalIgnoreCase)) return Icons.Material.Filled.Bedtime;
+            return Icons.Material.Outlined.DarkMode;
+        }
+    }
+}
+
+

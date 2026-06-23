@@ -1,0 +1,333 @@
+@page "/"
+@using System.Text.Json
+
+<PageTitle>Simple Diffusion</PageTitle>
+
+@if (offline)
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Class="mb-3" Icon="@Icons.Material.Filled.CloudOff">
+        <div class="d-flex align-center justify-space-between flex-wrap gap-2">
+            <span>
+                Can't reach the Stable Diffusion server at <b>@SD_ServerAddress</b>. You can still write prompts and browse tags, but generating won't work until it's running.
+            </span>
+            <div class="d-flex gap-2">
+                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Inherit" OnClick="@(() => _activeTabIndex = TabServer)">Open Server tab</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Inherit" OnClick="RetryConnect">Retry</MudButton>
+            </div>
+        </div>
+    </MudAlert>
+}
+
+<MudSelect T="string" Label="Checkpoint" Value="_selectedModel"
+           ValueChanged="OnModelChanged" Variant="Variant.Filled"
+           Disabled="_loadingModel"
+           AdornmentIcon="@(_loadingModel ? Icons.Material.Filled.HourglassTop : "")">
+    @if (_loadingModel)
+    {
+        <MudProgressLinear Color="Color.Info" Indeterminate="true" Class="mb-2" />
+    }
+    @foreach (var m in Models)
+    {
+        <MudSelectItem Value="@m.Title">@m.Model_Name</MudSelectItem>
+    }
+</MudSelect>
+
+<div style="margin-bottom: 2em" />
+
+<MudTabs ActivePanelIndex="_activeTabIndex" ActivePanelIndexChanged="OnTabChanged" Centered="true" Position="Position.Top" MinimumTabWidth="50px" ApplyEffectsToContainer="true" KeepPanelsAlive="true" PanelClass="=pa-6">
+    <MudTabPanel Icon="@Icons.Material.Filled.Create" Text="Txt2Img">
+
+        @* Both result views stay mounted so their generated images survive toggling A/B on/off — the
+           inactive one is just hidden, not destroyed. *@
+        <div style="@(_abEnabled ? "display:none" : "")">
+            <ResultsGallery _httpClient="_httpClient"
+                            _request="_request"
+                            _tagService="_tagService"
+                            GenerationEnded="GenerationEnded"
+                            OnPromptChanged="StateHasChanged"
+                            @ref=resultsGallery />
+        </div>
+        <div style="@(_abEnabled ? "" : "display:none")">
+            <AbComparePanel RequestA="_request"
+                            RequestB="_requestB"
+                            SdHttp="_httpClient"
+                            GenerationEnded="GenerationEnded"
+                            @ref="abPanel" />
+        </div>
+
+        @* On PC the form is capped to a centered column so the controls don't stretch
+           edge-to-edge; on mobile the max-width is a no-op and it fills the screen. *@
+        <div class="sd-gen-form">
+            <MudPaper Class="pa-4">
+                <div class="d-flex align-center gap-2 mt-4">
+                    <MudButton OnClick="RunTxt2Img"
+                               Variant="Variant.Filled" Color="Color.Primary" Class="flex-grow-1" Disabled="@(Txt2ImgBusy || offline)">
+                        @if (_loadingModel)
+                        {
+                            <text>Loading Model...</text>
+                        }
+                        else
+                        {
+                            <text>@(_abEnabled ? "Generate A / B" : "Generate")</text>
+                        }
+                    </MudButton>
+
+                    @if (!_abEnabled)
+                    {
+                        <MudTooltip Text="Surprise Me — random prompt + seed (your inputs stay untouched)">
+                            <MudIconButton Icon="@Icons.Material.Filled.Casino"
+                                           Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Large"
+                                           OnClick="SurpriseMe" Disabled="@Txt2ImgBusy" />
+                        </MudTooltip>
+                    }
+                </div>
+
+                @* Which A/B set the controls below edit — sits right under the Generate button, centered,
+                   with the "copy this set onto the other" action beside it. *@
+                @if (_abEnabled)
+                {
+                    <div class="d-flex justify-center align-center gap-3 mt-3 flex-wrap">
+                        <MudToggleGroup T="int" Value="_abActive" ValueChanged="SetAbActive"
+                                        Color="Color.Primary" Size="Size.Medium" CheckMark="false"
+                                        SelectionMode="SelectionMode.SingleSelection" Class="flex-shrink-0">
+                            <MudToggleItem Value="0">Set A</MudToggleItem>
+                            <MudToggleItem Value="1">Set B</MudToggleItem>
+                        </MudToggleGroup>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Secondary"
+                                   StartIcon="@Icons.Material.Filled.ContentCopy" OnClick="CopyAbActiveToOther">
+                            @(_abActive == 0 ? "Copy A → B" : "Copy B → A")
+                        </MudButton>
+                    </div>
+                }
+
+                <div class="mt-4" />
+
+                @* Presets — apply a saved set of txt2img settings (prompt, steps, CFG, size, …) *@
+                <div class="d-flex align-center gap-2 mb-3">
+                    <MudSelect T="string" Label="Preset" Value="_selectedPresetName" ValueChanged="OnPresetChanged" Variant="Variant.Outlined" Dense="true" Class="flex-grow-1">
+                        <MudSelectItem Value="@("")">-- No Preset / Custom --</MudSelectItem>
+                        @foreach (var p in Presets)
+                        {
+                            <MudSelectItem Value="@p.Name">@p.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudTooltip Text="Save Current Settings as Preset">
+                        <MudIconButton Icon="@Icons.Material.Filled.Save" Color="Color.Primary" Variant="Variant.Filled" OnClick="SavePresetDialog" />
+                    </MudTooltip>
+                    <MudTooltip Text="Manage Presets">
+                        <MudIconButton Icon="@Icons.Material.Filled.Settings" Color="Color.Secondary" Variant="Variant.Filled" OnClick="OpenManagePresetsDialog" />
+                    </MudTooltip>
+                </div>
+
+                @* @key forces these to re-init when switching A/B sets so the textarea shows the
+                   right set's text immediately. *@
+                <PromptField @key="@($"p{_abActive}")" Label="Prompt" @bind-Value="CurrentRequest.prompt" _tagService="_tagService" EnableFavorites="_enableFavorites" UseRibbon="@(_enableSuggestionRibbon && _isMobile)" />
+
+                <div class="mt-4" />
+                <PromptField @key="@($"n{_abActive}")" Label="Negative Prompt" @bind-Value="CurrentRequest.negative_prompt" _tagService="_tagService" EnableFavorites="_enableFavorites" UseRibbon="@(_enableSuggestionRibbon && _isMobile)" />
+
+                @if (_enableQuickTags)
+                {
+                    <SimpleDiffusion.Components.PromptToolsPanel Prompt="@CurrentRequest.prompt"
+                                                                OnPromptChanged="@(p => { CurrentRequest.prompt = p; StateHasChanged(); })"
+                                                                _tagService="_tagService"
+                                                                EnableFavorites="_enableFavorites"
+                                                                EnableFrequency="_enableFrequency" />
+                }
+
+                @* A/B compare toggle, with the Surprise randomness slider beside it when A/B is off.
+                   (The A/B set switcher lives up by the Generate button.) *@
+                <div class="d-flex align-center gap-3 mt-4" style="flex-wrap: nowrap;">
+                    <MudSwitch T="bool" Value="_abEnabled" ValueChanged="OnAbToggled" Color="Color.Primary" Label="A/B compare" Class="flex-shrink-0" />
+                    @if (!_abEnabled)
+                    {
+                        <MudSlider T="int" @bind-Value="_surpriseCraziness" Min="0" Max="@WorkspaceState.SurpriseCrazinessMax" Step="1"
+                                   Color="Color.Secondary" Class="flex-grow-1" Style="min-width: 0;">
+                            Randomness: @_surpriseCraziness / @WorkspaceState.SurpriseCrazinessMax
+                        </MudSlider>
+                        <MudTooltip Text="Keep your own positive/negative prompts and add the random tags on top (settings are used either way)">
+                            <MudCheckBox T="bool" @bind-Value="_surpriseUsePrompts" Color="Color.Secondary" Dense="true"
+                                         Size="Size.Small" Label="Use my prompts" Class="flex-shrink-0" />
+                        </MudTooltip>
+                    }
+                </div>
+            </MudPaper>
+
+            <MudPaper Elevation="0" Class="pa-4 mt-4">
+                <SimpleDiffusion.Components.Tabs.GenerationTab @key="@($"g{_abActive}")"
+                                                               Samplers="Samplers"
+                                                               Schedulers="Schedulers"
+                                                               SwapDimensions="SwapDimensions"
+                                                               Upscalers="Upscalers"
+                                                               Models="Models"
+                                                               _request="CurrentRequest"
+                                                               SdHttp="_httpClient"
+                                                               CnUnits="CurrentCnUnits"
+                                                               ResetPrompts="ResetPrompts"/>
+            </MudPaper>
+        </div>
+    </MudTabPanel>
+
+    <MudTabPanel Icon="@Icons.Material.Filled.Image" Text="Img2Img">
+            <Img2ImgPanel _httpClient="_httpClient"
+                  _tagService="_tagService"
+                  Samplers="Samplers"
+                  Schedulers="Schedulers"
+                  Models="Models"
+                  ServerOffline="offline"
+                  @ref="img2imgPanel" />
+    </MudTabPanel>
+
+    <MudTabPanel Icon="@Icons.Material.Filled.PhotoSizeSelectLarge" Text="Upscale">
+        <SimpleDiffusion.Components.Tabs.UpscaleTab Upscalers="Upscalers" SdHttp="_httpClient" ServerOffline="offline" @ref="upscaleTab" />
+    </MudTabPanel>
+
+    <MudTabPanel Icon="@Icons.Material.Filled.Style" Text="LoRA">
+        <SimpleDiffusion.Components.Tabs.LoraBrowser BaseLoraPath="@LoraPath"
+                                                     OnLoraSelected="ToggleLoraInPrompt"
+                                                     SdHttpClient="_httpClient"/>
+    </MudTabPanel>
+
+    <MudTabPanel Icon="@Icons.Material.Filled.Collections" Text="Gallery">
+        <SimpleDiffusion.Components.Tabs.GalleryTab Active="@(_activeTabIndex == TabGallery)" />
+    </MudTabPanel>
+
+    <MudTabPanel Icon="@Icons.Material.Filled.History" Text="History">
+        <SimpleDiffusion.Components.Tabs.HistoryTab OnApply="ApplyHistoryToTxt2Img" />
+    </MudTabPanel>
+
+    <MudTabPanel Icon="@Icons.Material.Filled.CloudDownload" Text="Civitai">
+        <SimpleDiffusion.Components.Tabs.CivitaiBrowser />
+    </MudTabPanel>
+
+    <MudTabPanel Icon="@Icons.Material.Filled.Dns" Text="Server">
+        <SimpleDiffusion.Components.ServerPanel />
+    </MudTabPanel>
+</MudTabs>
+
+@* Mobile bottom navigation with a thumb-reachable Generate button. *@
+@if (_enableMobileNav && _isMobile)
+{
+    <div style="height:76px;"></div>
+    <div class="sd-bottom-nav">
+        <div class="sd-bn-group">
+            <button class="sd-bn-item @(_activeTabIndex == 0 ? "active" : "")" @onclick="@(() => SelectTab(0))">
+                <MudIcon Icon="@Icons.Material.Filled.Create" Size="Size.Small" />
+                <span>Txt2Img</span>
+            </button>
+            <button class="sd-bn-item @(_activeTabIndex == 1 ? "active" : "")" @onclick="@(() => SelectTab(1))">
+                <MudIcon Icon="@Icons.Material.Filled.Image" Size="Size.Small" />
+                <span>Img2Img</span>
+            </button>
+        </div>
+
+        <button class="sd-bn-fab @(HasGenerateAction ? "" : "sd-bn-fab-hidden")" disabled="@GenerateDisabled" @onclick="TriggerGenerate" title="Generate">
+            <MudIcon Icon="@Icons.Material.Filled.AutoAwesome" />
+        </button>
+
+        <div class="sd-bn-group">
+            <button class="sd-bn-item @(_activeTabIndex == TabLora ? "active" : "")" @onclick="@(() => SelectTab(TabLora))">
+                <MudIcon Icon="@Icons.Material.Filled.Style" Size="Size.Small" />
+                <span>LoRA</span>
+            </button>
+        </div>
+    </div>
+}
+
+<style>
+    .sd-bottom-nav {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 3500;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 64px;
+        padding-bottom: env(safe-area-inset-bottom, 0);
+        background: var(--mud-palette-surface);
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    /* Equal-width groups on each side keep the Generate FAB dead-centered. */
+    .sd-bn-group {
+        flex: 1 1 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-around;
+        min-width: 0;
+    }
+
+    .sd-bn-item {
+        background: transparent;
+        border: none;
+        color: var(--mud-palette-text-secondary);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        font-size: 0.7rem;
+        cursor: pointer;
+        flex: 1;
+        padding: 6px;
+    }
+
+    .sd-bn-item.active {
+        color: var(--mud-palette-primary);
+    }
+
+    .sd-bn-fab {
+        flex: 0 0 auto;
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        border: none;
+        background: var(--mud-palette-primary);
+        color: white;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        margin-top: -16px;
+    }
+
+    .sd-bn-fab:disabled {
+        opacity: 0.5;
+        cursor: default;
+    }
+
+    /* Hidden on tabs with no generate action — keeps its slot so the side groups don't shift. */
+    .sd-bn-fab-hidden {
+        visibility: hidden;
+    }
+
+    /* While the soft keyboard is up, the prompt ribbon docks to it — hide the bottom nav. */
+    html.sd-keyboard-open .sd-bottom-nav {
+        display: none;
+    }
+
+    /* The fullscreen gallery is its own surface — hide the bottom nav behind/over it. */
+    html.sd-lightbox-open .sd-bottom-nav {
+        display: none;
+    }
+
+    /* The Settings dialog is a full sheet on mobile — hide the bottom nav while it's open. */
+    html.sd-settings-open .sd-bottom-nav {
+        display: none;
+    }
+</style>
+
+<style>
+    /* No auto-capitalized text for the panels */
+    .mud-tab-panel {
+        text-transform: none !important;
+    }
+
+    /* Keep the generation form a readable centered column on wide screens. */
+    .sd-gen-form {
+        max-width: 900px;
+        margin-inline: auto;
+    }
+</style>

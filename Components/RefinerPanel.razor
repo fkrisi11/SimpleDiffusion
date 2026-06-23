@@ -1,0 +1,65 @@
+@* Refiner settings — shared by the txt2img (GenerationTab) and img2img (Img2ImgPanel) forms, which
+   bind to two unrelated request types, so this takes the three fields as primitive two-way bindings
+   rather than the request object. *@
+
+<MudExpansionPanel Style="background: transparent;">
+    <TitleContent>
+        <MudCheckBox T="bool"
+                     Value="Enabled" ValueChanged="OnEnabledChanged"
+                     Label="Refiner"
+                     Color="Color.Secondary" />
+    </TitleContent>
+
+    <ChildContent>
+        <MudPaper Outlined="true" Class="pa-4 mt-2">
+            <MudGrid>
+
+                @* Checkpoint Selection *@
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="string"
+                               Label="Refiner Checkpoint"
+                               Value="Checkpoint" ValueChanged="OnCheckpointChanged"
+                               Variant="Variant.Outlined"
+                               Disabled="@(!Enabled)">
+                        @foreach (var m in Models)
+                        {
+                            <MudSelectItem Value="@m.Title">
+                                @m.Model_Name
+                            </MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+
+                @* Switch At Slider *@
+                <MudItem xs="12" sm="6">
+                    <MudSlider T="double"
+                               Value="SwitchAt" ValueChanged="OnSwitchAtChanged"
+                               Min="0.01"
+                               Max="1"
+                               Step="0.01"
+                               Disabled="@(!Enabled)">
+                        Switch at: @SwitchAt
+                    </MudSlider>
+                </MudItem>
+
+            </MudGrid>
+        </MudPaper>
+    </ChildContent>
+</MudExpansionPanel>
+
+@code {
+    [Parameter] public bool Enabled { get; set; }
+    [Parameter] public EventCallback<bool> EnabledChanged { get; set; }
+
+    [Parameter] public string? Checkpoint { get; set; }
+    [Parameter] public EventCallback<string?> CheckpointChanged { get; set; }
+
+    [Parameter] public double SwitchAt { get; set; }
+    [Parameter] public EventCallback<double> SwitchAtChanged { get; set; }
+
+    [Parameter] public List<SdModel> Models { get; set; } = new();
+
+    private async Task OnEnabledChanged(bool v) { Enabled = v; await EnabledChanged.InvokeAsync(v); }
+    private async Task OnCheckpointChanged(string? v) { Checkpoint = v; await CheckpointChanged.InvokeAsync(v); }
+    private async Task OnSwitchAtChanged(double v) { SwitchAt = v; await SwitchAtChanged.InvokeAsync(v); }
+}

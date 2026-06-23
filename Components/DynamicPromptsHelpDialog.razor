@@ -1,0 +1,58 @@
+@inject WildcardService Wildcards
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6"><MudIcon Icon="@Icons.Material.Filled.Casino" Class="mr-2 mb-n1" />Dynamic prompts</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            Put any of these in your prompt (or negative prompt). They're resolved <b>fresh for every image</b>,
+            so a batch (Batch Count &gt; 1) gives you variety.
+        </MudText>
+
+        <MudSimpleTable Dense="true" Bordered="true" Class="mb-4">
+            <thead>
+                <tr><th>Syntax</th><th>Meaning</th><th>Example</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><code>{a|b|c}</code></td><td>Pick one at random</td><td><code>{red|blue|green} dress</code></td></tr>
+                <tr><td><code>{N$$ a|b|c }</code></td><td>Pick N distinct, comma-joined</td><td><code>{2$$ cat|dog|fox }</code> → "dog, cat"</td></tr>
+                <tr><td><code>{X-Y$$ … }</code></td><td>Pick a random N between X and Y</td><td><code>{1-2$$ a|b|c }</code></td></tr>
+                <tr><td><code>__name__</code></td><td>Random line from a wildcard file</td><td><code>a __color__ car</code></td></tr>
+                <tr><td>Nesting</td><td>Variants/wildcards can contain more syntax</td><td><code>{a|{b|c}}</code></td></tr>
+            </tbody>
+        </MudSimpleTable>
+
+        <MudText Typo="Typo.subtitle2">Wildcards</MudText>
+        <MudText Typo="Typo.body2" Class="mb-2">
+            Create text files in the <code>wildcards</code> folder next to the app — one option per line
+            (blank lines and <code>#</code> comments are ignored). <code>wildcards/color.txt</code> is used by
+            <code>__color__</code>. Sub-folders work too: <code>wildcards/people/hair.txt</code> → <code>__people/hair__</code>.
+        </MudText>
+
+        @{
+            var names = Wildcards.ListNames();
+        }
+        @if (names.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info" Dense="true">No wildcard files found yet. Add some to the <code>wildcards</code> folder.</MudAlert>
+        }
+        else
+        {
+            <div class="d-flex flex-wrap gap-1">
+                @foreach (var n in names)
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">__@(n)__</MudChip>
+                }
+            </div>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+    private void Close() => MudDialog.Close();
+}

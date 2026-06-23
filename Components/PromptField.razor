@@ -1,0 +1,434 @@
+@inject IJSRuntime JS
+
+<div style="position:relative; width: 100%;" @ref="_container"
+     data-ac-open="@(_isOpen ? "1" : "0")" data-ac-count="@(_suggestions?.Count ?? 0)">
+    <MudTextField T="string" Label="@Label" Variant="Variant.Outlined" MaxLines="200" Lines="5" AutoGrow="true"
+                  Value="@Value" ValueChanged="OnTextChanged"
+                  @onclick="HandleClick"
+                  @onfocus="HandleFocus"
+                  @onkeyup="@(() => CheckCursorBounds(false))"
+                  @onblur="HandleBlur"
+                  @onkeydown="HandleKeyDown"
+                  Immediate="true"
+                  autocomplete="off" />
+
+    @if (!UseRibbon)
+    {
+        <TagSuggestionPopup Open="_isOpen" Suggestions="_suggestions" SelectedIndex="_selectedIndex"
+                            EnableFavorites="EnableFavorites" TagService="_tagService"
+                            OnApply="ApplyTag" OnToggleFavorite="ToggleFavorite" />
+    }
+</div>
+
+@* Mobile: the suggestion ribbon is built under <body> by sdMobile.showRibbon (see SyncRibbon),
+   so an ancestor transform (MudTabs) can't clip the docked, fixed element. *@
+
+<style>
+    /* Keyboard-docked suggestion ribbon (mobile) */
+    .sd-suggestion-ribbon {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: var(--sd-kb-offset, 0px);
+        z-index: 4000;
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        padding: 8px 10px;
+        background: #0b0f19;
+        border-top: 1px solid #4b5563;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        touch-action: none;
+        user-select: none;
+        cursor: grab;
+    }
+
+    .sd-suggestion-ribbon::-webkit-scrollbar {
+        display: none;
+    }
+
+    .sd-ribbon-chip {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 40px;
+        padding: 8px 14px;
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid #4b5563;
+        color: #e0e0e0;
+        font-size: 0.9rem;
+        user-select: none;
+        white-space: nowrap;
+    }
+
+    .sd-ribbon-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        flex: 0 0 auto;
+    }
+
+    .sd-ribbon-label {
+        font-weight: 500;
+    }
+
+    .sd-ribbon-count {
+        color: #6b6f7b;
+        font-size: 0.75rem;
+    }
+</style>
+
+@code {
+    [Parameter] public string Value { get; set; }
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string Label { get; set; }
+    [Parameter] public TagService _tagService { get; set; }
+    [Parameter] public bool EnableFavorites { get; set; } = true;
+    [Parameter] public bool UseRibbon { get; set; } = false;
+
+    private ElementReference _container;
+    private List<TagItem> _suggestions = new();
+    private bool _isOpen;
+    private int _selectedIndex = 0;
+    private string _lastWord = "";
+    private bool _lastWasLoraContext = false;
+    private long _lastSearchTime;
+    private CursorInfo? _lastCursorInfo;
+    private bool _isDeleting = false;
+    private string _lastValue = "";
+
+    private async Task OnTextChanged(string val)
+    {
+        if (val.Length > (_lastValue?.Length ?? 0))
+        {
+            _isDeleting = false;
+        }
+
+        _lastValue = val;
+
+        Value = val;
+        await ValueChanged.InvokeAsync(val);
+
+        // Update the timestamp to "now"
+        var currentTimestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        _lastSearchTime = currentTimestamp;
+
+        // Wait for the debounce period
+        await Task.Delay(150);
+
+        // ONLY proceed if no new search has started since we began waiting
+        if (currentTimestamp == _lastSearchTime)
+        {
+            await UpdateAutocompleteState(true);
+        }
+    }
+
+    private async Task CheckCursorBounds(bool isChange)
+    {
+        if (_isOpen || isChange)
+        {
+            await UpdateAutocompleteState(isChange);
+        }
+    }
+
+    // A mouse click is a caret reposition, not an intent to autocomplete. Always close the
+    // popup so a stale-open state can't hijack the next Enter (which would otherwise apply a
+    // tag or be swallowed instead of inserting a newline). Suggestions reopen on typing.
+    private async Task HandleClick()
+    {
+        // Tapping/clicking is a caret reposition, not an autocomplete intent — close the selector.
+        // On mobile this also dismisses the keyboard-docked ribbon (like moving the cursor on PC).
+        if (UseRibbon)
+        {
+            try { await JS.InvokeVoidAsync("sdMobile.hideRibbon"); } catch { }
+        }
+
+        if (!_isOpen) return;
+        _isOpen = false;
+        _lastWord = "";
+        _lastWasLoraContext = false;
+        _suggestions = new();
+        StateHasChanged();
+    }
+
+    private async Task UpdateAutocompleteState(bool isChange)
+    {
+        var info = await JS.InvokeAsync<CursorInfo>("promptHelper.getCursorInfo", _container);
+        _lastCursorInfo = info;
+
+        if (info != null && (info.IsLoraContext || info.Word.Length >= 2))
+        {
+            bool contextChanged = info.IsLoraContext != _lastWasLoraContext;
+            bool wordChanged = info.Word != _lastWord;
+
+            if (contextChanged || wordChanged)
+            {
+                _suggestions = new();
+                StateHasChanged();
+
+                // Runs even when Word == "" if IsLoraContext == true
+                _suggestions = _tagService.Search(info.Word, info.IsLoraContext).ToList();
+
+                _isOpen = isChange && !_isDeleting && _suggestions.Any();
+                _selectedIndex = 0;
+
+                _lastWord = info.Word;
+                _lastWasLoraContext = info.IsLoraContext;
+            }
+            else if (isChange)
+            {
+                _isOpen = _suggestions.Any();
+            }
+        }
+        else
+        {
+            _isOpen = false;
+            _lastWord = "";
+            _lastWasLoraContext = false;
+            _suggestions = new();
+        }
+
+        StateHasChanged();
+        await SyncRibbon();
+    }
+
+    // Push the current suggestions to (or hide) the body-level mobile ribbon.
+    private async Task SyncRibbon()
+    {
+        if (!UseRibbon) return;
+        try
+        {
+            if (_isOpen && _suggestions != null && _suggestions.Any())
+            {
+                var items = _suggestions
+                    .Select(t => new { text = t.DisplayText, count = t.FormattedCount, color = TagColors.Category(t, _tagService) })
+                    .ToArray();
+                await JS.InvokeVoidAsync("sdMobile.showRibbon", items, _dotNetRef);
+            }
+            else
+            {
+                await JS.InvokeVoidAsync("sdMobile.hideRibbon");
+            }
+        }
+        catch { }
+    }
+
+    private async Task ApplyTag(TagItem tag)
+    {
+        try { await JS.InvokeVoidAsync("sdHaptic.buzz", 15); } catch { }
+
+        var info = _lastCursorInfo ?? await JS.InvokeAsync<CursorInfo>("promptHelper.getCursorInfo", _container);
+        if (info == null) return;
+
+        //Console.WriteLine($"[ApplyTag] wordStart={info.Start} wordEnd={info.End} word=\"{info.Word}\" tag=\"{tag.Name}\"");
+
+        string baseText = Value ?? "";
+
+        // Safety check: Ensure boundaries are within string limits
+        int startIdx = Math.Clamp(info.Start, 0, baseText.Length);
+        int endIdx = Math.Clamp(info.End, 0, baseText.Length);
+
+        string before = baseText.Substring(0, startIdx);
+        string after = baseText.Substring(endIdx);
+
+        before = before.TrimEnd(' ', '\t');
+        bool isNewLineContext =
+            before.EndsWith("\n", StringComparison.Ordinal) ||
+            before.EndsWith("\r", StringComparison.Ordinal);
+
+        string tagToInsert;
+
+        if (tag.IsLora)
+        {
+            if (before.EndsWith("lora:", StringComparison.OrdinalIgnoreCase))
+            {
+                before = before.Substring(0, before.Length - 5);
+            }
+
+            // Check for existing brackets
+            bool hasOpeningBracket = before.TrimEnd().EndsWith("<");
+            bool hasClosingBracket = after.TrimStart().StartsWith(">");
+
+            // Handle "lora:" prefix
+            if (before.EndsWith("lora:", StringComparison.OrdinalIgnoreCase))
+            {
+                before = before.Substring(0, Math.Max(0, before.Length - 5));
+                hasOpeningBracket = before.TrimEnd().EndsWith("<");
+            }
+
+            if (hasOpeningBracket)
+            {
+                int lastBracket = before.LastIndexOf("<");
+                if (lastBracket != -1) before = before.Substring(0, lastBracket);
+            }
+
+            if (hasClosingBracket)
+            {
+                // Remove the first found '>' in the after-segment
+                int bracketPos = after.IndexOf(">");
+                after = after.Substring(bracketPos + 1);
+            }
+
+            before = before.TrimEnd(' ', '\t');
+            tagToInsert = $"<lora:{tag.Name}:1.0>";
+        }
+        else
+        {
+            // Escape () so a literal-paren tag (e.g. "aqua_(konosuba)") isn't parsed as weighting.
+            tagToInsert = PromptTags.Escape(tag.Name);
+        }
+
+        // --- PREFIX CLEANUP ---
+        before = before.TrimEnd(' ', '\t');
+
+        // Only auto-space for comma-separated mode (NOT when starting on a new line)
+        if (!isNewLineContext)
+        {
+            if (before.EndsWith(","))
+            {
+                before += " ";
+            }
+            else if (before.Length > 0 &&
+                     !before.EndsWith(" ") &&
+                     !before.EndsWith("(") &&
+                     !before.EndsWith("<"))
+            {
+                before += " ";
+            }
+        }
+
+        // --- SUFFIX & COLLAPSING ---
+        after = TrimStartSpacesTabsOnly(after); // do NOT remove newlines
+
+        string suffix;
+
+        // If next token is a closing paren, do NOT add trailing comma/space
+        if (after.StartsWith(")", StringComparison.Ordinal))
+        {
+            suffix = "";
+        }
+        else if (after.StartsWith(",", StringComparison.Ordinal))
+        {
+            // Consume the existing comma and any following spaces/tabs,
+            // but preserve NEWLINES exactly.
+            after = after.Substring(1);
+            after = TrimStartSpacesTabsOnly(after);
+
+            // Always normalize to ", " (even if next char is newline)
+            suffix = ", ";
+        }
+        else if (string.IsNullOrWhiteSpace(after))
+        {
+            // End of string: keep ", " so user can keep typing next tag
+            suffix = ", ";
+        }
+        else
+        {
+            // Normal continuation: comma-separated
+            suffix = ", ";
+        }
+
+        // Final Assembly
+        Value = before + tagToInsert + suffix + after;
+        int caretIndex = (before + tagToInsert + suffix).Length;
+
+        _isDeleting = false;
+
+        _isOpen = false;
+        _lastWord = "";
+        _lastWasLoraContext = false;
+        await ValueChanged.InvokeAsync(Value);
+        StateHasChanged();
+        await SyncRibbon();
+        await JS.InvokeVoidAsync("promptHelper.setTextAreaValue", _container, Value, caretIndex);
+    }
+
+    private static string TrimStartSpacesTabsOnly(string s)
+    {
+        int i = 0;
+        while (i < s.Length && (s[i] == ' ' || s[i] == '\t'))
+            i++;
+        return i == 0 ? s : s.Substring(i);
+    }
+
+    private void HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is "Backspace" or "Delete")
+        {
+            _isDeleting = true;
+        }
+        else if (e.Key.Length == 1) // real character input
+        {
+            // User typed something meaningful → exit delete mode
+            _isDeleting = false;
+        }
+
+        // Arrow/Enter/Tab/Escape navigation is handled exclusively by the JS
+        // interop handler (bindAutocompleteKeys -> OnAutocompleteKey) to avoid
+        // double-stepping the selection index.
+    }
+
+    private async Task ScrollSelectedIntoView()
+    {
+        // Wait one tick so the DOM updates the selected class/id
+        await Task.Yield();
+
+        await JS.InvokeVoidAsync("promptHelper.scrollSuggestionIntoView", $"tag-suggestion-{_selectedIndex}");
+    }
+
+    private async Task HandleFocus()
+    {
+        // On mobile, keep the suggestion ribbon pinned just above the soft keyboard.
+        if (UseRibbon)
+        {
+            try { await JS.InvokeVoidAsync("sdMobile.startKeyboardDock"); } catch { }
+        }
+    }
+
+    private async Task HandleBlur()
+    {
+        // Giving extra time for any MouseDown logic to complete
+        // and for the UI to remain stable during the interaction.
+        await Task.Delay(250);
+
+        if (UseRibbon)
+        {
+            try { await JS.InvokeVoidAsync("sdMobile.hideRibbon"); } catch { }
+            try { await JS.InvokeVoidAsync("sdMobile.stopKeyboardDock"); } catch { }
+        }
+
+        // Only close if we didn't just apply a tag (which sets _isOpen to false anyway)
+        if (_isOpen)
+        {
+            _isOpen = false;
+            _lastWord = "";
+            _lastWasLoraContext = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleFavorite(string tagName)
+    {
+        if (_tagService == null) return;
+        if (_tagService.IsFavorite(tagName))
+        {
+            _tagService.RemoveFavorite(tagName);
+        }
+        else
+        {
+            _tagService.AddFavorite(tagName);
+        }
+        StateHasChanged();
+    }
+
+    public class CursorInfo
+    {
+        public string Word { get; set; } = "";
+        public int Start { get; set; }
+        public int End { get; set; }
+        public bool IsLoraContext { get; set; }
+    }
+}

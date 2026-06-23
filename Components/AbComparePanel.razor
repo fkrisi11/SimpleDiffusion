@@ -1,0 +1,355 @@
+@namespace SimpleDiffusion.Components
+@using System.Net.Http.Json
+@using SimpleDiffusion.Infrastructure
+@inject IJSRuntime JS
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject HttpClient AppHttp
+@inject WildcardService Wildcards
+@inject SimpleDiffusion.Components.Services.UiPreferences Prefs
+@inject HistoryService History
+
+<MudPaper Class="pa-4 mt-6" Elevation="0" Width="100%" Style="background: transparent;">
+
+    @* Diff summary: what actually differs between set A and B. *@
+    @{
+        var diffs = Diffs().ToList();
+    }
+    <div class="d-flex align-center flex-wrap gap-2 mb-3">
+        <MudText Typo="Typo.subtitle2" Class="mr-1">A/B comparison</MudText>
+        @if (diffs.Count == 0)
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">A and B are identical</MudChip>
+        }
+        else
+        {
+            @foreach (var d in diffs)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined">@d.Label: @d.A → @d.B</MudChip>
+            }
+        }
+    </div>
+
+    @if (_busy)
+    {
+        <div class="mb-3">
+            <div class="d-flex align-center justify-space-between mb-1">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Generating @(_activeIndex == 1 ? "B" : "A")@(_progress > 0 ? $" · {_progress}%" : "")@(_eta > 0 ? $" · ~{_eta:0}s left" : "")
+                </MudText>
+                <div class="d-flex gap-2">
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                               StartIcon="@Icons.Material.Filled.SkipNext" OnClick="Skip">Skip</MudButton>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                               StartIcon="@Icons.Material.Filled.Stop" OnClick="Cancel" Disabled="_cancelling">Cancel</MudButton>
+                </div>
+            </div>
+            <MudProgressLinear Color="Color.Primary" Indeterminate="@(_progress <= 0)" Value="_progress" Rounded="true" />
+        </div>
+    }
+
+    <MudGrid Spacing="2">
+        @RenderSide("A", _imageA, _busyA, 0)
+        @RenderSide("B", _imageB, _busyB, 1)
+    </MudGrid>
+</MudPaper>
+
+@code {
+    [Parameter] public Txt2ImgRequest RequestA { get; set; } = default!;
+    [Parameter] public Txt2ImgRequest RequestB { get; set; } = default!;
+    [Parameter] public HttpClient SdHttp { get; set; } = default!; // Stable Diffusion API client
+    [Parameter] public EventCallback<bool> GenerationEnded { get; set; }
+
+    private readonly Random _rng = new();
+    private string? _imageA, _imageB;   // result-store ids (the bytes live on disk, not in memory)
+    private const int GridThumbWidth = 768;
+    private bool _busy, _busyA, _busyB;
+    private bool _cancelling;
+    private int _progress;          // 0..100 for the active image
+    private double _eta;            // seconds remaining (from the SD API)
+    private string _currentPreview = "";
+    private int _activeIndex;       // 0 = A, 1 = B
+
+    // Per-side interrogate captions (0 = A, 1 = B) and which sides are mid-interrogate.
+    private readonly Dictionary<int, string> _captions = new();
+    private readonly HashSet<int> _captionLoading = new();
+
+    public bool Busy => _busy;
+
+    /// <summary>Generate both sides, sequentially, with live progress.</summary>
+    public Task GenerateAb() => GenerateSides(0, 1);
+
+    /// <summary>Generate just the given side(s) — used by the per-side "Regenerate" buttons so you can
+    /// re-roll A or B alone without redoing the other.</summary>
+    private async Task GenerateSides(params int[] indices)
+    {
+        if (_busy) return;
+        _busy = true; _cancelling = false;
+        foreach (var i in indices)
+        {
+            _captions.Remove(i);                       // a stale caption no longer matches the new image
+            if (i == 0) _imageA = null; else _imageB = null;
+        }
+        try { await JS.InvokeVoidAsync("sdHaptic.buzz", 30); } catch { }
+        await GenerationEnded.InvokeAsync(true);
+        StateHasChanged();
+
+        foreach (var i in indices)
+        {
+            if (_cancelling) break;
+
+            _activeIndex = i;
+            _progress = 0; _eta = 0; _currentPreview = "";
+            if (i == 0) _busyA = true; else _busyB = true;
+            StateHasChanged();
+
+            var cts = new CancellationTokenSource();
+            var poll = PollProgress(cts.Token);
+            string? img = null;
+            try { img = await GenOne(i == 0 ? RequestA : RequestB); }
+            catch { }
+            finally { cts.Cancel(); try { await poll; } catch { } }
+
+            if (string.IsNullOrEmpty(img) && !_cancelling)
+                Snackbar.Add($"Set {(i == 0 ? "A" : "B")} failed to generate.", Severity.Error);
+
+            // Persist the output to the result store (#5) and keep only its id.
+            string? id = null;
+            if (!string.IsNullOrEmpty(img))
+            {
+                try { id = await Task.Run(() => GalleryServer.SaveResult(img)); if (id != null) _ = GalleryServer.WarmResultTierAsync(id, GridThumbWidth); }
+                catch { }
+            }
+            if (i == 0) { _imageA = id; _busyA = false; }
+            else { _imageB = id; _busyB = false; }
+            _currentPreview = "";
+
+            // Record this side to history (per device) so a refresh can recover it.
+            if (!string.IsNullOrEmpty(id))
+                await History.AddAsync(HistoryEntry.FromTxt2Img(i == 0 ? RequestA : RequestB, new List<string> { id }, i == 0 ? "A/B A" : "A/B B"));
+
+            StateHasChanged();
+        }
+
+        _busy = false; _cancelling = false; _currentPreview = "";
+        await GenerationEnded.InvokeAsync(true);
+        StateHasChanged();
+    }
+
+    // CLIP caption / DeepDanbooru tags for one side's image, shown beneath it.
+    private async Task InterrogateSide(int index, string model)
+    {
+        var id = index == 0 ? _imageA : _imageB;
+        if (string.IsNullOrEmpty(id)) return;
+        try
+        {
+            _captionLoading.Add(index);
+            _captions.Remove(index);
+            await InvokeAsync(StateHasChanged);
+
+            var b64 = await GalleryServer.GetResultBase64Async(id);
+            _captions[index] = b64 is null
+                ? "(image no longer available)"
+                : await Interrogate.RunAsync(SdHttp, b64, model);
+        }
+        catch (Exception ex) { _captions[index] = $"(interrogate failed: {ex.Message})"; }
+        finally { _captionLoading.Remove(index); await InvokeAsync(StateHasChanged); }
+    }
+
+    // Drop one side's image (and its caption) without touching the other.
+    private void ClearSide(int index)
+    {
+        if (index == 0) _imageA = null; else _imageB = null;
+        _captions.Remove(index);
+    }
+
+    // Poll the SD progress endpoint while an image is generating: drives the bar, ETA and live preview.
+    private async Task PollProgress(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                var prog = await SdHttp.GetFromJsonAsync<SdProgressResponse>("sdapi/v1/progress", ct);
+                if (prog != null)
+                {
+                    _progress = (int)(prog.progress * 100);
+                    _eta = prog.eta_relative;
+                    var candidate = prog.current_image;
+                    // Downscale + blank-check on a background thread so the client gets a small JPEG.
+                    string? small = null; bool blank = false;
+                    if (!string.IsNullOrEmpty(candidate))
+                        (blank, small) = await Task.Run(() => GalleryServer.PreparePreview(candidate, GridThumbWidth, Prefs.OptimizeLargeImages));
+                    if (!blank && small != null) _currentPreview = small;
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+            catch { /* ignore poll errors */ }
+            try { await Task.Delay(1000, ct); } catch { break; }
+        }
+    }
+
+    // Stop the whole A/B run.
+    private async Task Cancel()
+    {
+        _cancelling = true;
+        try { await SdHttp.PostAsync("sdapi/v1/interrupt", null); } catch { }
+    }
+
+    // Skip the current image and move to the next side.
+    private async Task Skip()
+    {
+        try { await SdHttp.PostAsync("sdapi/v1/skip", null); } catch { }
+    }
+
+    private async Task<string?> GenOne(Txt2ImgRequest req)
+    {
+        var r = req.Clone();
+        r.n_iter = 1;
+        r.batch_size = 1;
+        if (!r.enable_refiner) r.refiner_checkpoint = null;
+        // Resolve dynamic-prompt syntax just like the normal generator.
+        r.prompt = DynamicPrompts.Resolve(req.prompt, _rng, Wildcards.Get);
+        r.negative_prompt = DynamicPrompts.Resolve(req.negative_prompt, _rng, Wildcards.Get);
+        try
+        {
+            var resp = await SdHttp.PostAsJsonAsync("sdapi/v1/txt2img", r);
+            var res = await resp.Content.ReadFromJsonAsync<Txt2ImgResponse>();
+            return res?.images?.FirstOrDefault();
+        }
+        catch { return null; }
+    }
+
+    private RenderFragment RenderSide(string label, string? image, bool busy, int index) => __builder =>
+    {
+        <MudItem xs="12" sm="6">
+            <div class="d-flex align-center gap-2 mb-1">
+                <MudChip T="string" Size="Size.Small" Color="@(index == 0 ? Color.Primary : Color.Secondary)" Variant="Variant.Filled">@label</MudChip>
+                @if (!_busy)
+                {
+                    <MudTooltip Text="@($"Regenerate {label}")">
+                        <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small" Color="Color.Primary"
+                                       OnClick="@(() => GenerateSides(index))" />
+                    </MudTooltip>
+                    @if (!string.IsNullOrEmpty(image))
+                    {
+                        <MudTooltip Text="@($"Clear {label}")">
+                            <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" Color="Color.Error"
+                                           OnClick="@(() => ClearSide(index))" />
+                        </MudTooltip>
+                    }
+                }
+            </div>
+            <MudPaper Height="420px" Width="100%"
+                      Class="d-flex align-center justify-center overflow-hidden pa-2"
+                      Style="background-color: var(--mud-palette-background-grey); position: relative" Elevation="4">
+                @if (busy)
+                {
+                    @if (!string.IsNullOrEmpty(_currentPreview))
+                    {
+                        <MudImage Src="@_currentPreview" ObjectFit="ObjectFit.Contain"
+                                  Style="max-height:100%; max-width:100%;" />
+                    }
+                    else
+                    {
+                        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+                    }
+                }
+                else if (!string.IsNullOrEmpty(image))
+                {
+                    <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Default" Class="sd-tile-spinner" />
+                    <MudImage Src="@($"/results/file?id={image}&w={GridThumbWidth}")"
+                              ObjectFit="ObjectFit.Contain"
+                              Class="rounded-lg cursor-pointer"
+                              Style="max-height:100%; max-width:100%;"
+                              @onclick="@(() => OpenLightbox(index))" />
+                }
+                else
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">No image yet — press Generate.</MudText>
+                }
+            </MudPaper>
+
+            @if (!string.IsNullOrEmpty(image))
+            {
+                <div style="display:flex; gap:8px; margin-top:0.5em; flex-wrap:wrap;">
+                    <MudTooltip Text="Describe image (CLIP)">
+                        <MudIconButton Icon="@Icons.Material.Filled.Psychology" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                                       OnClick="@(() => InterrogateSide(index, "clip"))" Disabled="@(_busy || _captionLoading.Contains(index))" />
+                    </MudTooltip>
+                    <MudTooltip Text="Tags (DeepDanbooru)">
+                        <MudIconButton Icon="@Icons.Material.Filled.Label" Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small"
+                                       OnClick="@(() => InterrogateSide(index, "deepdanbooru"))" Disabled="@(_busy || _captionLoading.Contains(index))" />
+                    </MudTooltip>
+                    <SendMenu Resolve="@(() => GalleryServer.GetResultBase64Async(image))" />
+                    <MudTooltip Text="Save to Gallery">
+                        <MudIconButton Icon="@Icons.Material.Filled.BookmarkAdd" Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small"
+                                       OnClick="@(() => SaveSideToGallery(image))" />
+                    </MudTooltip>
+                </div>
+
+                @if (_captionLoading.Contains(index))
+                {
+                    <MudPaper Class="mt-2 pa-2" Elevation="1" Style="background: rgba(0,0,0,0.06);">
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="ml-2" />
+                    </MudPaper>
+                }
+                else if (_captions.TryGetValue(index, out var cap))
+                {
+                    <MudPaper Class="mt-2 pa-2" Elevation="1" Style="background: rgba(0,0,0,0.06);">
+                        <MudText Typo="Typo.caption" Style="white-space: pre-wrap; word-break: break-word;">@cap</MudText>
+                    </MudPaper>
+                }
+            }
+        </MudItem>
+    };
+
+    private async Task SaveSideToGallery(string image)
+    {
+        var b64 = await GalleryServer.GetResultBase64Async(image);
+        if (b64 is not null) await GallerySaveFlow.RunAsync(DialogService, AppHttp, Snackbar, b64);
+    }
+
+    private void OpenLightbox(int index)
+    {
+        var images = new List<string>();
+        if (!string.IsNullOrEmpty(_imageA)) images.Add($"/results/file?id={_imageA}");
+        if (!string.IsNullOrEmpty(_imageB)) images.Add($"/results/file?id={_imageB}");
+        if (images.Count == 0) return;
+
+        // Adjust the selected index if A is missing.
+        int sel = index;
+        if (string.IsNullOrEmpty(_imageA) && index == 1) sel = 0;
+
+        ImageLightbox.ShowAsync(DialogService, images, sel);
+    }
+
+    // The fields worth surfacing as "what changed" between the two sets.
+    private IEnumerable<(string Label, string A, string B)> Diffs()
+    {
+        string Short(string s) => s.Length > 40 ? s[..40] + "…" : s;
+
+        (string Label, string A, string B)? D(string label, string a, string b)
+            => a == b ? null : (label, Short(a), Short(b));
+
+        var candidates = new (string Label, string A, string B)?[]
+        {
+            D("Prompt", RequestA.prompt ?? "", RequestB.prompt ?? ""),
+            D("Negative", RequestA.negative_prompt ?? "", RequestB.negative_prompt ?? ""),
+            D("Seed", RequestA.seed.ToString(), RequestB.seed.ToString()),
+            D("Steps", RequestA.steps.ToString(), RequestB.steps.ToString()),
+            D("CFG", RequestA.cfg_scale.ToString(), RequestB.cfg_scale.ToString()),
+            D("CFG rescale", RequestA.cfg_rescale.ToString(), RequestB.cfg_rescale.ToString()),
+            D("Sampler", RequestA.sampler_name ?? "", RequestB.sampler_name ?? ""),
+            D("Scheduler", RequestA.scheduler ?? "", RequestB.scheduler ?? ""),
+            D("Size", $"{RequestA.width}×{RequestA.height}", $"{RequestB.width}×{RequestB.height}"),
+            D("Hires", RequestA.enable_hr.ToString(), RequestB.enable_hr.ToString()),
+            D("Denoise", RequestA.denoising_strength.ToString(), RequestB.denoising_strength.ToString()),
+            D("Variation", RequestA.subseed_strength.ToString(), RequestB.subseed_strength.ToString()),
+        };
+
+        foreach (var c in candidates)
+            if (c is { } v)
+                yield return v;
+    }
+}

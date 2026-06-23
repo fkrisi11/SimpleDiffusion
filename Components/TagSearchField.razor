@@ -1,0 +1,132 @@
+@inject IJSRuntime JS
+@implements IDisposable
+
+@* Single-line tag input with autocomplete: type to search the tag dictionary and pick a real tag.
+   Reuses TagSuggestionPopup for the dropdown; on mobile it can instead use the keyboard-docked
+   suggestion ribbon (UseRibbon), matching the prompt field. Used in Settings to add Quick Tags /
+   Favourites (and reusable anywhere you pick a tag by name). *@
+<div class="@Class" style="position:relative; @Style">
+    <MudTextField T="string" Label="@Label" Value="@Value" ValueChanged="OnInput"
+                  Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" autocomplete="off"
+                  @onkeydown="OnKeyDown" @onfocus="OnFocus" @onblur="OnBlur" />
+    @if (!UseRibbon)
+    {
+        <TagSuggestionPopup Open="_open" Suggestions="_suggestions" SelectedIndex="_selectedIndex"
+                            EnableFavorites="false" TagService="TagService" OnApply="Pick" />
+    }
+</div>
+
+@code {
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public TagService TagService { get; set; } = default!;
+    [Parameter] public string Label { get; set; } = "Add tag...";
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public string? Style { get; set; }
+    /// <summary>Mobile: show suggestions in the keyboard-docked ribbon instead of the dropdown list.</summary>
+    [Parameter] public bool UseRibbon { get; set; }
+
+    private List<TagItem> _suggestions = new();
+    private bool _open;
+    private int _selectedIndex;
+    private DotNetObjectReference<TagSearchField>? _ref;
+
+    private async Task OnInput(string? val)
+    {
+        Value = val ?? "";
+        await ValueChanged.InvokeAsync(Value);
+        Search();
+        await SyncRibbon();
+    }
+
+    private void Search()
+    {
+        var term = (Value ?? "").Trim();
+        if (term.Length >= 2)
+        {
+            _suggestions = TagService.Search(term, false).ToList();
+            _open = _suggestions.Count > 0;
+            _selectedIndex = 0;
+        }
+        else
+        {
+            _open = false;
+            _suggestions = new();
+        }
+    }
+
+    // Push the current suggestions to (or hide) the body-level mobile ribbon.
+    private async Task SyncRibbon()
+    {
+        if (!UseRibbon) return;
+        try
+        {
+            if (_open && _suggestions.Count > 0)
+            {
+                _ref ??= DotNetObjectReference.Create(this);
+                var items = _suggestions
+                    .Select(t => new { text = t.DisplayText, count = t.FormattedCount, color = TagColors.Category(t, TagService) })
+                    .ToArray();
+                await JS.InvokeVoidAsync("sdMobile.showRibbon", items, _ref);
+            }
+            else
+            {
+                await JS.InvokeVoidAsync("sdMobile.hideRibbon");
+            }
+        }
+        catch { }
+    }
+
+    // Invoked from the body-level ribbon when a chip is tapped.
+    [JSInvokable]
+    public Task ApplyRibbonTag(int index) => InvokeAsync(async () =>
+    {
+        if (index >= 0 && index < _suggestions.Count) await Pick(_suggestions[index]);
+    });
+
+    private async Task Pick(TagItem tag)
+    {
+        Value = tag.Name;
+        await ValueChanged.InvokeAsync(Value);
+        _open = false;
+        _suggestions = new();
+        if (UseRibbon) { try { await JS.InvokeVoidAsync("sdMobile.hideRibbon"); } catch { } }
+    }
+
+    private async Task OnFocus()
+    {
+        if (UseRibbon) { try { await JS.InvokeVoidAsync("sdMobile.startKeyboardDock"); } catch { } }
+    }
+
+    private async Task OnBlur()
+    {
+        await Task.Delay(200); // let a suggestion's tap/mousedown land before the popup/ribbon closes
+        _open = false;
+        if (UseRibbon)
+        {
+            try { await JS.InvokeVoidAsync("sdMobile.hideRibbon"); } catch { }
+            try { await JS.InvokeVoidAsync("sdMobile.stopKeyboardDock"); } catch { }
+        }
+        StateHasChanged();
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (UseRibbon || !_open) return;   // ribbon uses tap-to-insert, not key nav
+        switch (e.Key)
+        {
+            case "ArrowDown": _selectedIndex = Math.Min(_selectedIndex + 1, _suggestions.Count - 1); break;
+            case "ArrowUp": _selectedIndex = Math.Max(_selectedIndex - 1, 0); break;
+            case "Escape": _open = false; break;
+            case "Enter":
+                if (_selectedIndex >= 0 && _selectedIndex < _suggestions.Count) await Pick(_suggestions[_selectedIndex]);
+                break;
+        }
+    }
+
+    public void Dispose()
+    {
+        if (UseRibbon) { try { _ = JS.InvokeVoidAsync("sdMobile.hideRibbon"); } catch { } }
+        _ref?.Dispose();
+    }
+}

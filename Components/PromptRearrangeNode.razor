@@ -1,0 +1,63 @@
+@* Renders a single prompt node (leaf chip or nested group) for the Rearrange Tags board.
+   The chip/group carries a data-drag-id so the JS pointer engine can drag it; arrows, +/- and
+   double-tap-weight are ordinary Blazor handlers delegated to the board, which owns the tree. *@
+
+@if (Node.IsLineBreak)
+{
+    @* A preserved newline: forces a visual wrap so the board mirrors the prompt's line structure. *@
+    <div class="rearrange-linebreak"></div>
+}
+else if (Node.IsGroup)
+{
+    <div class="rearrange-group" style="@GroupBorderStyle" data-drag-id="@Node.Id">
+        <div class="rearrange-group-inner">
+            <span class="rearrange-group-label" @ondblclick="@(() => Board.OpenWeightDialog(Node))" title="Double-tap to set group weight">
+                @GroupBadge
+            </span>
+            <div class="d-flex flex-wrap align-center gap-1">
+                @for (int i = 0; i < Node.Children.Count; i++)
+                {
+                    <PromptDropSlot Parent="Node" Index="i" />
+                    <PromptRearrangeNode Node="Node.Children[i]" />
+                }
+                <PromptDropSlot Parent="Node" Index="Node.Children.Count" />
+            </div>
+            <span class="rearrange-mod minus" title="Decrease group weight" @onclick="@(() => Board.AdjustEmphasis(Node, -1))">-</span>
+            <span class="rearrange-mod plus" title="Increase group weight" @onclick="@(() => Board.AdjustEmphasis(Node, +1))">+</span>
+        </div>
+    </div>
+}
+else
+{
+    <div class="rearrange-chip @(Node.IsNetworkTag ? "lora-chip" : "")" data-drag-id="@Node.Id">
+        <span class="rearrange-text" @ondblclick="@(() => Board.OpenWeightDialog(Node))">@PromptTokenizer.GetChipLabel(Node)</span>
+
+        @if (!Node.IsNetworkTag)
+        {
+            <span class="rearrange-mod minus" title="Decrease weight" @onclick="@(() => Board.AdjustEmphasis(Node, -1))">-</span>
+            <span class="rearrange-mod plus" title="Increase weight" @onclick="@(() => Board.AdjustEmphasis(Node, +1))">+</span>
+        }
+    </div>
+}
+
+@code {
+    [CascadingParameter(Name = "RearrangeBoard")] public PromptRearrangeBoard Board { get; set; } = default!;
+
+    [Parameter] public PromptNode Node { get; set; } = default!;
+
+    private string GroupBadge
+    {
+        get
+        {
+            if (Node.ExplicitWeight.HasValue && Math.Abs(Node.ExplicitWeight.Value - 1.0) > 0.001)
+                return $"( :{Node.ExplicitWeight.Value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)} )";
+            return "( )";
+        }
+    }
+
+    // Slightly tint weighted groups so emphasis is visible.
+    private string GroupBorderStyle =>
+        Node.ExplicitWeight.HasValue && Math.Abs(Node.ExplicitWeight.Value - 1.0) > 0.001
+            ? "border-color: rgba(76, 175, 80, 0.4);"
+            : "";
+}

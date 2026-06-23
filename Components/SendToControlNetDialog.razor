@@ -1,0 +1,64 @@
+@namespace SimpleDiffusion.Components
+
+@* Picker for "Send → ControlNet": choose any existing unit(s) on either page to receive the image,
+   and/or add a new unit to a page. Multi-select across pages. *@
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-2">Send this image to ControlNet. Pick one or more targets.</MudText>
+
+        @foreach (var tgt in Targets)
+        {
+            <MudText Typo="Typo.subtitle2" Class="mt-2">@tgt.Page</MudText>
+
+            @if (tgt.Units.Count == 0)
+            {
+                <MudText Typo="Typo.caption" Class="d-block">No ControlNet units here yet.</MudText>
+            }
+            else
+            {
+                @foreach (var (unit, i) in tgt.Units.Select((u, idx) => (u, idx)))
+                {
+                    <MudCheckBox T="bool" Value="@IsChecked(unit)" ValueChanged="@(v => SetChecked(unit, v))"
+                                 Dense="true" Label="@UnitLabel(unit, i)" />
+                }
+            }
+
+            <MudCheckBox T="bool" Value="@IsAddNew(tgt)" ValueChanged="@(v => SetAddNew(tgt, v))"
+                         Dense="true" Color="Color.Primary"
+                         Label="@(tgt.Units.Count == 0 ? "Add a new ControlNet unit here" : "Add a new unit here")" />
+
+            <MudDivider Class="my-1" />
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Confirm" Disabled="@(!AnySelected)">Send</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public List<CnSendTarget> Targets { get; set; } = new();
+
+    private readonly HashSet<ControlNetUnit> _checked = new();
+    private readonly HashSet<CnSendTarget> _addNew = new();
+
+    private bool IsChecked(ControlNetUnit u) => _checked.Contains(u);
+    private void SetChecked(ControlNetUnit u, bool on) { if (on) _checked.Add(u); else _checked.Remove(u); }
+    private bool IsAddNew(CnSendTarget t) => _addNew.Contains(t);
+    private void SetAddNew(CnSendTarget t, bool on) { if (on) _addNew.Add(t); else _addNew.Remove(t); }
+    private bool AnySelected => _checked.Count > 0 || _addNew.Count > 0;
+
+    private static string UnitLabel(ControlNetUnit u, int i)
+    {
+        var desc = string.IsNullOrEmpty(u.ControlType) ? "All" : u.ControlType;
+        if (!string.IsNullOrEmpty(u.Module) && u.Module != "none") desc += " / " + u.Module;
+        if (string.IsNullOrEmpty(u.ImageB64)) desc += " (no image)";
+        return $"Unit {i + 1} — {desc}";
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private void Confirm()
+        => MudDialog.Close(DialogResult.Ok(new CnSendResult { Units = _checked.ToList(), AddTo = _addNew.ToList() }));
+}

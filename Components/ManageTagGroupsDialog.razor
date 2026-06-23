@@ -1,0 +1,122 @@
+@using MudBlazor
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Sell" Class="mr-3 mb-n1" />
+            Manage Tag Groups
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (Groups == null || !Groups.Any())
+        {
+            <MudAlert Severity="Severity.Info">No tag groups saved yet.</MudAlert>
+        }
+        else
+        {
+            <MudList T="TagGroup" ReadOnly="true">
+                @for (int i = 0; i < Groups.Count; i++)
+                {
+                    var index = i;
+                    var group = Groups[i];
+                    <MudListItem>
+                        <div class="d-flex align-center justify-between w-100 gap-2">
+                            <div class="flex-grow-1" style="min-width:0;">
+                                <MudText Typo="Typo.body1" Class="text-truncate">@group.Name</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="text-truncate d-block">@group.Tags</MudText>
+                            </div>
+                            <div class="d-flex align-center gap-1">
+                                <MudTooltip Text="Move Up">
+                                    <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small"
+                                                   Disabled="@(index == 0)" OnClick="@(() => MoveUp(index))" />
+                                </MudTooltip>
+                                <MudTooltip Text="Move Down">
+                                    <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Size="Size.Small"
+                                                   Disabled="@(index == Groups.Count - 1)" OnClick="@(() => MoveDown(index))" />
+                                </MudTooltip>
+                                <MudTooltip Text="Edit / rename">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small"
+                                                   OnClick="@(() => EditGroup(index))" />
+                                </MudTooltip>
+                                <MudTooltip Text="Delete">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                                                   OnClick="@(() => DeleteGroup(index))" />
+                                </MudTooltip>
+                            </div>
+                        </div>
+                    </MudListItem>
+                }
+            </MudList>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Color="Color.Primary" OnClick="Close" Variant="Variant.Filled">Done</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public List<TagGroup> Groups { get; set; } = new();
+    [Parameter] public EventCallback OnGroupsUpdated { get; set; }
+
+    [Inject] private IDialogService DialogService { get; set; } = default!;
+
+    private void Close() => MudDialog.Close();
+
+    private async Task MoveUp(int index)
+    {
+        if (index <= 0 || index >= Groups.Count) return;
+        var item = Groups[index];
+        Groups.RemoveAt(index);
+        Groups.Insert(index - 1, item);
+        await OnGroupsUpdated.InvokeAsync();
+    }
+
+    private async Task MoveDown(int index)
+    {
+        if (index < 0 || index >= Groups.Count - 1) return;
+        var item = Groups[index];
+        Groups.RemoveAt(index);
+        Groups.Insert(index + 1, item);
+        await OnGroupsUpdated.InvokeAsync();
+    }
+
+    private async Task EditGroup(int index)
+    {
+        if (index < 0 || index >= Groups.Count) return;
+        var group = Groups[index];
+
+        var parameters = new DialogParameters<SaveTagGroupDialog>
+        {
+            { x => x.Name, group.Name },
+            { x => x.Tags, group.Tags }
+        };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<SaveTagGroupDialog>("Edit Tag Group", parameters, options);
+        var result = await dialog.Result;
+
+        if (result != null && !result.Canceled && result.Data is TagGroup edited && !string.IsNullOrWhiteSpace(edited.Name))
+        {
+            group.Name = edited.Name;
+            group.Tags = edited.Tags;
+            await OnGroupsUpdated.InvokeAsync();
+        }
+    }
+
+    private async Task DeleteGroup(int index)
+    {
+        if (index < 0 || index >= Groups.Count) return;
+
+        bool? confirm = await DialogService.ShowMessageBox(
+            "Delete Tag Group",
+            $"Delete tag group '{Groups[index].Name}'?",
+            yesText: "Delete", cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            Groups.RemoveAt(index);
+            await OnGroupsUpdated.InvokeAsync();
+        }
+    }
+}

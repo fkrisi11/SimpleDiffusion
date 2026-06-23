@@ -1,0 +1,295 @@
+@inject IJSRuntime JS
+
+@* Row 1: Samplers *@
+<MudGrid Class="mb-4">
+    <MudItem xs="6">
+        <MudSelect T="string" Label="Sampling method" @bind-Value="_request.sampler_name" Variant="Variant.Outlined">
+            @foreach (var sampler in Samplers)
+            {
+                <MudSelectItem Value="@sampler.Name">@sampler.Name</MudSelectItem>
+            }
+        </MudSelect>
+    </MudItem>
+    <MudItem xs="6">
+        <MudSelect T="string" Label="Schedule type" @bind-Value="_request.scheduler" Variant="Variant.Outlined">
+            @foreach (var s in Schedulers)
+            {
+                <MudSelectItem Value="@s.name">@s.label</MudSelectItem>
+            }
+        </MudSelect>
+    </MudItem>
+</MudGrid>
+
+@* Row 2: Dimensions & Batching *@
+<MudGrid Style="align-items:center;">
+    @* Dimensions & Aspect Ratios *@
+    <MudItem xs="12" sm="5">
+        <div class="d-flex align-center gap-2">
+            <div class="flex-grow-1">
+                <MudNumericField Value="_request.width" ValueChanged="OnWidthChanged" T="int" Label="Width" Step="64" Min="64" Variant="Variant.Outlined" Class="mb-2" />
+                <MudNumericField Value="_request.height" ValueChanged="OnHeightChanged" T="int" Label="Height" Step="64" Min="64" Variant="Variant.Outlined" />
+            </div>
+            <MudIconButton Icon="@Icons.Material.Filled.SwapVert" Variant="Variant.Outlined" OnClick="HandleSwapDimensions" title="Swap Dimensions" Style="height: 56px;" />
+        </div>
+        <div class="mt-2 d-flex flex-wrap gap-1 align-center">
+            <MudText Typo="Typo.caption" Class="mr-1" Style="font-weight: 500;">Aspect Ratios:</MudText>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="@(() => SetAspectRatio(1.0))" Style="min-width: 40px; padding: 2px 6px; font-size: 0.75rem;">1:1</MudButton>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="@(() => SetAspectRatio(3.0 / 2.0))" Style="min-width: 40px; padding: 2px 6px; font-size: 0.75rem;">3:2</MudButton>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="@(() => SetAspectRatio(2.0 / 3.0))" Style="min-width: 40px; padding: 2px 6px; font-size: 0.75rem;">2:3</MudButton>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="@(() => SetAspectRatio(4.0 / 3.0))" Style="min-width: 40px; padding: 2px 6px; font-size: 0.75rem;">4:3</MudButton>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="@(() => SetAspectRatio(3.0 / 4.0))" Style="min-width: 40px; padding: 2px 6px; font-size: 0.75rem;">3:4</MudButton>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="@(() => SetAspectRatio(16.0 / 9.0))" Style="min-width: 40px; padding: 2px 6px; font-size: 0.75rem;">16:9</MudButton>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="@(() => SetAspectRatio(9.0 / 16.0))" Style="min-width: 40px; padding: 2px 6px; font-size: 0.75rem;">9:16</MudButton>
+            <MudTooltip Text="Keep the current ratio: changing width or height adjusts the other">
+                <MudCheckBox T="bool" Value="_lockAspect" ValueChanged="OnLockAspectChanged" Dense="true" Size="Size.Small" Label="Lock" Class="ml-1" />
+            </MudTooltip>
+        </div>
+
+        <div class="mt-3 d-flex align-center gap-1">
+            <MudNumericField T="long" Value="_request.seed" ValueChanged="@(v => _request.seed = v)"
+                             Label="@($"Seed (-1 = random, max {Txt2ImgRequest.SeedMax:N0})")"
+                             Min="-1" Max="Txt2ImgRequest.SeedMax"
+                             HideSpinButtons="true" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1" />
+            <MudTooltip Text="@($"Roll a random seed (0–{Txt2ImgRequest.SeedMax:N0})")">
+                <MudIconButton Icon="@Icons.Material.Filled.Casino" Variant="Variant.Outlined" OnClick="RandomizeSeed" />
+            </MudTooltip>
+        </div>
+    </MudItem>
+
+    @* Batching & Total *@
+    <MudItem xs="12" sm="7">
+        <MudSlider @bind-Value="_request.n_iter" Min="1" Max="100" Color="Color.Primary">Batch Count: @_request.n_iter</MudSlider>
+        <MudSlider @bind-Value="_request.batch_size" Min="1" Max="8" Color="Color.Secondary">Batch Size: @_request.batch_size</MudSlider>
+
+        <MudAlert Severity="Severity.Info" Dense="true" Class="mt-2" Variant="Variant.Outlined">
+            Total Images: <b>@(_request.n_iter* _request.batch_size)</b>
+        </MudAlert>
+    </MudItem>
+
+    @* Row 3: Sampling Steps, CFG Scale & Default Button *@
+    <MudItem xs="12" sm="6">
+        <MudSlider @bind-Value="_request.steps" Min="1" Max="150" Step="1" Color="Color.Primary">
+            Sampling Steps: @_request.steps
+        </MudSlider>
+        <MudSlider @bind-Value="_request.cfg_scale" Min="1" Max="30" Step="0.5" Color="Color.Primary">
+            CFG Scale: @_request.cfg_scale
+        </MudSlider>
+        <MudSlider @bind-Value="_request.cfg_rescale" Min="0.0" Max="1.5" Step="0.05" Color="Color.Secondary">
+            CFG Rescale: @_request.cfg_rescale
+        </MudSlider>
+    </MudItem>
+
+    <MudItem xs="12" sm="6" Class="d-flex justify-center justify-sm-end align-center">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ResetToDefaults">
+            Default Settings
+        </MudButton>
+    </MudItem>
+
+</MudGrid>
+
+@* Row 3: Hires Fix (Properly isolated) *@
+<MudGrid Class="mt-4">
+    <MudItem xs="12">
+        <MudExpansionPanel Style="background: transparent;">
+            <TitleContent>
+                <MudCheckBox T=bool Value="_request.enable_hr" ValueChanged="@OnHiresChanged" Label="@("Hires. fix " + resolutionData)" Color="Color.Primary" />
+            </TitleContent>
+            <ChildContent>
+                <MudPaper Outlined="true" Class="pa-4 mt-2">
+                    <MudGrid>
+                        <MudItem xs="12" sm="4">
+                            <MudSelect T="string" Label="Upscaler" @bind-Value="_request.hr_upscaler" Variant="Variant.Outlined">
+                                @foreach (var u in Upscalers)
+                                {
+                                    <MudSelectItem Value="@u.name">@u.name</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudNumericField @bind-Value="_request.hr_second_pass_steps" Label="Hires steps" Min="0" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudSlider @bind-Value="_request.denoising_strength" Min="0" Max="1" Step="0.01">
+                                Denoising: @_request.denoising_strength
+                            </MudSlider>
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudNumericField T="double" Value="_request.hr_scale" ValueChanged="@OnHiresScaleChanged" Step="0.5" Min="1" Max="100" Label="Upscale by" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudNumericField T="int" Value="_request.hr_resize_x" ValueChanged="@OnHiresWidthChanged" Step="64" Min="0" Max="32768" Label="Resize width to" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudNumericField T="int" Value="_request.hr_resize_y" ValueChanged="@OnHiresHeightChanged" Step="64" Min="0" Max="32768" Label="Resize height to" Variant="Variant.Outlined" />
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            </ChildContent>
+        </MudExpansionPanel>
+    </MudItem>
+</MudGrid>
+
+@* Row: Refiner *@
+<MudGrid Class="mt-4">
+    <MudItem xs="12">
+        <RefinerPanel @bind-Enabled="_request.enable_refiner"
+                      @bind-Checkpoint="_request.refiner_checkpoint"
+                      @bind-SwitchAt="_request.refiner_switch_at"
+                      Models="Models" />
+    </MudItem>
+</MudGrid>
+
+@* ControlNet — image conditioning for txt2img (pose, edges, depth, scribble, tile, …). *@
+<div class="mt-3" />
+<ControlNetSection Units="CnUnits" Http="SdHttp" OnChanged="OnControlNetChanged" />
+
+@code {
+    [Parameter] public Txt2ImgRequest _request { get; set; }
+    [Parameter] public List<SdSampler> Samplers { get; set; }
+    [Parameter] public List<SchedulerInfo> Schedulers { get; set; }
+    [Parameter] public EventCallback SwapDimensions { get; set; }
+    [Parameter] public EventCallback ResetPrompts { get; set; }
+    [Parameter] public List<UpscalerInfo> Upscalers { get; set; }
+    [Parameter] public List<SdModel> Models { get; set; }
+    [Parameter] public HttpClient SdHttp { get; set; } = default!;
+
+    // ControlNet units for the active txt2img set (owned by WorkspaceState via Home, so they survive
+    // tab switches and the A/B-set toggle). Mirrored onto _request.alwayson_scripts (which ResultsGallery
+    // clones and posts) whenever they change.
+    [Parameter] public List<ControlNetUnit> CnUnits { get; set; } = new();
+
+    string resolutionData = "";
+
+    protected override void OnInitialized() => SyncControlNet();
+
+    protected override void OnParametersSet()
+    {
+        UpdateResolutionData();
+    }
+
+    private void OnControlNetChanged() => SyncControlNet();
+
+    // Null when no unit is active, so a request without ControlNet serializes exactly as before.
+    private void SyncControlNet() => _request.alwayson_scripts = ControlNetUnit.BuildAlwaysOn(CnUnits.ToArray());
+
+    // Roll a concrete random seed (0..SeedMax) rather than just resetting to -1, so the user can
+    // reproduce/share the exact value that gets used.
+    private async Task RandomizeSeed()
+    {
+        _request.seed = Random.Shared.NextInt64(0, Txt2ImgRequest.SeedMax + 1);
+        try { await JS.InvokeVoidAsync("sdHaptic.buzz", 15); } catch { }
+    }
+
+    void UpdateResolutionData()
+    {
+        if (_request.enable_hr)
+        {
+            if (_request.hr_resize_x != 0 || _request.hr_resize_y != 0)
+            {
+                if (_request.hr_resize_x != 0 && _request.hr_resize_y != 0)
+                {
+                    resolutionData = ($"{_request.width} x {_request.height} -> {_request.hr_resize_x} x {_request.hr_resize_y}");
+                }
+                else
+                {
+                    resolutionData = "";
+                }
+            }
+            else
+            {
+                resolutionData = ($"{_request.width} x {_request.height} -> {(int)(_request.width * _request.hr_scale)} x {(int)(_request.height * _request.hr_scale)}");
+            }
+        }
+        else
+        {
+            resolutionData = "";
+        }
+
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SetAspectRatio(double ratio)
+    {
+        double currentArea = _request.width * _request.height;
+        double h = Math.Sqrt(currentArea / ratio);
+        double w = h * ratio;
+
+        int wRounded = (int)(Math.Round(w / 64.0) * 64);
+        int hRounded = (int)(Math.Round(h / 64.0) * 64);
+
+        _request.width = Math.Max(64, wRounded);
+        _request.height = Math.Max(64, hRounded);
+
+        UpdateResolutionData();
+        try { await JS.InvokeVoidAsync("sdHaptic.buzz", 10); } catch { }
+    }
+
+    private bool _lockAspect;
+    private double _lockedAspect = 1.0;
+
+    private void OnLockAspectChanged(bool on)
+    {
+        _lockAspect = on;
+        if (on && _request.height > 0) _lockedAspect = (double)_request.width / _request.height;
+    }
+
+    private void OnWidthChanged(int newValue)
+    {
+        _request.width = newValue;
+        if (_lockAspect && _lockedAspect > 0) _request.height = Math.Max(64, (int)(Math.Round(newValue / _lockedAspect / 64.0) * 64));
+        UpdateResolutionData();
+    }
+
+    private void OnHeightChanged(int newValue)
+    {
+        _request.height = newValue;
+        if (_lockAspect && _lockedAspect > 0) _request.width = Math.Max(64, (int)(Math.Round(newValue * _lockedAspect / 64.0) * 64));
+        UpdateResolutionData();
+    }
+
+    private async Task HandleSwapDimensions()
+    {
+        await SwapDimensions.InvokeAsync(null);
+        UpdateResolutionData();
+        try { await JS.InvokeVoidAsync("sdHaptic.buzz", 10); } catch { }
+    }
+
+    private void OnHiresChanged(bool newValue)
+    {
+        _request.enable_hr = newValue;
+        UpdateResolutionData();
+    }
+
+    private void OnHiresScaleChanged(double newValue)
+    {
+        _request.hr_scale = newValue;
+        UpdateResolutionData();
+    }
+
+    private void OnHiresWidthChanged(int newValue)
+    {
+        _request.hr_resize_x = newValue;
+        UpdateResolutionData();
+    }
+
+    private void OnHiresHeightChanged(int newValue)
+    {
+        _request.hr_resize_y = newValue;
+        UpdateResolutionData();
+    }
+
+    private async Task ResetToDefaults()
+    {
+        // Restore every generation setting to the model defaults — the single source of truth is
+        // Txt2ImgRequest's own field initializers, so this can't drift (covers seed, subseed,
+        // hires, refiner, etc.). The one UI default we re-apply is the sampler.
+        _request.CopyFrom(new Txt2ImgRequest());
+        _request.sampler_name = "DPM++ 2M";
+
+        // Prompts are owned by the page (they bind there), so clear them via the callback.
+        await ResetPrompts.InvokeAsync(null);
+
+        UpdateResolutionData();
+        try { await JS.InvokeVoidAsync("sdHaptic.buzz", 15); } catch { }
+    }
+}

@@ -1,0 +1,1182 @@
+@inject IConfiguration Configuration
+@inject ISnackbar Snackbar
+@inject SimpleDiffusion.Components.Services.UiPreferences UiPrefs
+@inject IDialogService DialogService
+@inject NavigationManager Nav
+@inject HttpClient Http
+@inject SimpleDiffusion.Components.Civitai.CivitaiDownloadManager Downloads
+@inject SimpleDiffusion.Components.Services.WorkspaceState Workspace
+@inject SimpleDiffusion.Components.Services.TagService TagService
+@inject SimpleDiffusion.Components.Services.LoraStatsService LoraStats
+@inject IJSRuntime JS
+@using System.IO
+@using System.Text.Json
+
+<MudDialog Class="sd-dialog-mobile-full">
+    <TitleContent>
+        <MudText Typo="Typo.h5" Style="font-weight: 800; background: linear-gradient(135deg, #7e6fff 0%, #a29bfe 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+            Application Settings
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <div class="settings-dialog-content">
+            <MudTabs Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-4" KeepPanelsAlive="true">
+                <MudTabPanel Text="Server &amp; Storage" Icon="@Icons.Material.Filled.Dns">
+
+                @* SD Server Address Setting *@
+                <div>
+                    <div class="d-flex align-center justify-between mb-2">
+                        <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);">
+                            Stable Diffusion Server Address
+                        </MudText>
+                        <div class="d-flex align-center gap-2">
+                            @if (_testingConnection)
+                            {
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                            }
+                            else if (_connectionTested)
+                            {
+                                @if (_connectionSuccess)
+                                {
+                                    <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Filled">Connected</MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip T="string" Color="Color.Error" Size="Size.Small" Variant="Variant.Filled">Failed</MudChip>
+                                }
+                            }
+                        </div>
+                    </div>
+                    <div class="d-flex gap-4 align-center">
+                        <MudTextField @bind-Value="_sdServerAddress"
+                                      Label="Address (e.g. http://localhost:7860/)"
+                                      Variant="Variant.Outlined"
+                                      Class="flex-grow-1" />
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Secondary"
+                                   OnClick="TestConnection"
+                                   Style="height: 56px;">
+                            Test
+                        </MudButton>
+                    </div>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1">
+                        Make sure the Stable Diffusion API endpoint is enabled with --api
+                    </MudText>
+                </div>
+
+                <MudDivider Class="my-4" style="opacity: 0.15;" />
+
+                @* Stable Diffusion Launch Script *@
+                <div>
+                    <div class="d-flex align-center justify-between mb-2">
+                        <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);">
+                            Stable Diffusion Launch Script
+                        </MudText>
+                        <div>
+                            @if (_pathsValidated && !string.IsNullOrWhiteSpace(_sdServerBatchPath))
+                            {
+                                @if (_batchPathExists)
+                                {
+                                    <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Filled">Valid File</MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip T="string" Color="Color.Error" Size="Size.Small" Variant="Variant.Filled">Not Found</MudChip>
+                                }
+                            }
+                        </div>
+                    </div>
+                    <MudTextField @bind-Value="_sdServerBatchPath"
+                                  Label="Batch file path (.bat)"
+                                  Variant="Variant.Outlined"
+                                  Adornment="@(_isLocalHost ? Adornment.End : Adornment.None)"
+                                  AdornmentIcon="@Icons.Material.Filled.FolderOpen"
+                                  OnAdornmentClick="@(() => BrowseFile(p => _sdServerBatchPath = p, _sdServerBatchPath, "*.bat", "Choose the launch script"))"
+                                  HelperText="The script the Server tab runs to start Stable Diffusion (e.g. webui-user.bat)" />
+                </div>
+
+                <MudDivider Class="my-6" />
+
+                @* Base LoRA Path Setting *@
+                <div>
+                    <div class="d-flex align-center justify-between mb-2">
+                        <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);">
+                            Base LoRA Path
+                        </MudText>
+                        <div>
+                            @if (_pathsValidated)
+                            {
+                                @if (_loraPathExists)
+                                {
+                                    <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Filled">Valid Directory</MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip T="string" Color="Color.Error" Size="Size.Small" Variant="Variant.Filled">Not Found</MudChip>
+                                }
+                            }
+                        </div>
+                    </div>
+                    <MudTextField @bind-Value="_loraPath"
+                                  Label="Directory Path"
+                                  Variant="Variant.Outlined"
+                                  Adornment="@(_isLocalHost ? Adornment.End : Adornment.None)"
+                                  AdornmentIcon="@Icons.Material.Filled.FolderOpen"
+                                  OnAdornmentClick="@(() => BrowseFolder(p => _loraPath = p, _loraPath))"
+                                  HelperText="Absolute path to your models/Lora directory" />
+                </div>
+
+                <MudDivider Class="my-4" style="opacity: 0.15;" />
+
+                @* Tag Metadata Path Setting *@
+                <div>
+                    <div class="d-flex align-center justify-between mb-2">
+                        <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);">
+                            Tag Metadata Path
+                        </MudText>
+                        <div>
+                            @if (_pathsValidated)
+                            {
+                                @if (_tagPathExists)
+                                {
+                                    <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Filled">Valid Directory</MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip T="string" Color="Color.Error" Size="Size.Small" Variant="Variant.Filled">Not Found</MudChip>
+                                }
+                            }
+                        </div>
+                    </div>
+                    <MudTextField @bind-Value="_tagPath"
+                                  Label="Directory Path"
+                                  Variant="Variant.Outlined"
+                                  Adornment="@(_isLocalHost ? Adornment.End : Adornment.None)"
+                                  AdornmentIcon="@Icons.Material.Filled.FolderOpen"
+                                  OnAdornmentClick="@(() => BrowseFolder(p => _tagPath = p, _tagPath))"
+                                  HelperText="Path containing CSV files for tag autocompletion" />
+                </div>
+
+                <MudDivider Class="my-4" style="opacity: 0.15;" />
+
+                @* Models Root Setting *@
+                <div>
+                    <div class="d-flex align-center justify-between mb-2">
+                        <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);">
+                            Models Root Path
+                        </MudText>
+                        <div>
+                            @if (_pathsValidated && !string.IsNullOrWhiteSpace(_modelsRoot))
+                            {
+                                @if (_modelsRootExists)
+                                {
+                                    <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Filled">Valid Directory</MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip T="string" Color="Color.Error" Size="Size.Small" Variant="Variant.Filled">Not Found</MudChip>
+                                }
+                            }
+                        </div>
+                    </div>
+                    <MudTextField @bind-Value="_modelsRoot"
+                                  Label="Directory Path"
+                                  Variant="Variant.Outlined"
+                                  Adornment="@(_isLocalHost ? Adornment.End : Adornment.None)"
+                                  AdornmentIcon="@Icons.Material.Filled.FolderOpen"
+                                  OnAdornmentClick="@(() => BrowseFolder(p => _modelsRoot = p, _modelsRoot))"
+                                  HelperText="Root folder of your SD models (where Civitai downloads are saved)" />
+                </div>
+
+                <MudDivider Class="my-4" style="opacity: 0.15;" />
+
+                <MudButton Variant="Variant.Outlined" Color="Color.Default" StartIcon="@Icons.Material.Filled.FactCheck" OnClick="ValidatePaths">
+                    Validate Paths
+                </MudButton>
+
+                <MudDivider Class="my-4" style="opacity: 0.15;" />
+
+                <div>
+                    <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);" Class="mb-2">
+                        Result Image Cache
+                    </MudText>
+                    <MudNumericField T="int" @bind-Value="_maxResultCacheMb" Label="Max cache size (MB)" Min="256" Max="200000" Step="256"
+                                     Variant="Variant.Outlined"
+                                     HelperText="Disk budget for this session's generated/upscaled images (used by the result views and History tab). Oldest images are evicted past this. Takes effect after a restart." />
+                </div>
+
+                </MudTabPanel>
+
+                <MudTabPanel Text="Features" Icon="@Icons.Material.Filled.Tune">
+
+                @* Feature Toggles & Resets *@
+                <div>
+                    <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);" Class="mb-2">
+                        Mobile Prompting & Autocomplete Features
+                    </MudText>
+                    <div class="d-flex flex-column gap-3 mb-4">
+                        <div class="d-flex align-center justify-space-between">
+                            <MudSwitch T="bool" @bind-Value="_enableQuickTags" Label="Enable Prompt Helper (Quick Tags / Rearrange Board)" Color="Color.Info" />
+                        </div>
+                        <div class="d-flex align-center justify-space-between">
+                            <MudSwitch T="bool" @bind-Value="_enableFavorites" Label="Enable Tag Favorites" Color="Color.Secondary" />
+                            @if (_enableFavorites)
+                            {
+                                <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" OnClick="ClearAllFavorites">
+                                    Clear Favorites
+                                </MudButton>
+                            }
+                        </div>
+                        <div class="d-flex align-center justify-space-between">
+                            <MudSwitch T="bool" @bind-Value="_enableFrequencyTracking" Label="Enable Tag Frequency Tracking (Frequent Tab)" Color="Color.Primary" />
+                            @if (_enableFrequencyTracking)
+                            {
+                                <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" OnClick="ResetFrequencyData">
+                                    Reset Frequency Data
+                                </MudButton>
+                            }
+                        </div>
+                        <div class="d-flex align-center justify-space-between">
+                            <MudSwitch T="bool" @bind-Value="_enableSuggestionRibbon" Label="Mobile: keyboard suggestion ribbon" Color="Color.Info" />
+                        </div>
+                        <div class="d-flex align-center justify-space-between">
+                            <MudSwitch T="bool" @bind-Value="_enableMobileNav" Label="Mobile: bottom nav &amp; Generate button" Color="Color.Primary" />
+                        </div>
+                        <div class="d-flex align-center justify-space-between">
+                            <MudSwitch T="bool" @bind-Value="_autoAddTriggers" Label="Add a LoRA's trigger words to the prompt when added" Color="Color.Info" />
+                        </div>
+                        <div class="d-flex align-center justify-space-between">
+                            <MudSwitch T="bool" @bind-Value="_autoplayVideos" Label="Autoplay preview videos (the fullscreen viewer always plays)" Color="Color.Info" />
+                        </div>
+                        <MudText Typo="Typo.caption" Class="ml-1" Style="color: var(--mud-palette-text-secondary);">
+                            Refresh the page after saving for the autoplay change to take effect.
+                        </MudText>
+
+                        <div class="d-flex align-center justify-space-between">
+                            <MudSwitch T="bool" @bind-Value="_optimizeLargeImages" Label="Gallery image optimization" Color="Color.Info" />
+                        </div>
+                        <MudText Typo="Typo.caption" Class="ml-1" Style="color: var(--mud-palette-text-secondary);">
+                            Shows a downscaled copy of large images in the fullscreen viewer so zoom &amp; close stay smooth (recommended on phones). Originals are never changed — metadata, downloads and Send always use the full PNG. Turn off to view raw PNGs (best on powerful PCs).
+                        </MudText>
+
+                        <div class="mt-2">
+                            <MudText Typo="Typo.subtitle2">Fullscreen viewer swipe actions</MudText>
+                            <MudText Typo="Typo.caption" Class="ml-1" Style="color: var(--mud-palette-text-secondary);">
+                                When not zoomed in, swipe up or down on the image to run an action (works whether or not the controls are showing).
+                            </MudText>
+                            <div class="d-flex gap-2 flex-wrap mt-1">
+                                <MudSelect T="string" @bind-Value="_lightboxSwipeUp" Label="Swipe up" Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:160px;">
+                                    <MudSelectItem Value="@("none")">Nothing</MudSelectItem>
+                                    <MudSelectItem Value="@("close")">Close gallery</MudSelectItem>
+                                    <MudSelectItem Value="@("metadata")">Show metadata</MudSelectItem>
+                                </MudSelect>
+                                <MudSelect T="string" @bind-Value="_lightboxSwipeDown" Label="Swipe down" Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:160px;">
+                                    <MudSelectItem Value="@("none")">Nothing</MudSelectItem>
+                                    <MudSelectItem Value="@("close")">Close gallery</MudSelectItem>
+                                    <MudSelectItem Value="@("metadata")">Show metadata</MudSelectItem>
+                                </MudSelect>
+                            </div>
+                        </div>
+
+                        <div class="d-flex align-center justify-space-between">
+                            <MudSwitch T="bool" Value="_hapticFeedback" ValueChanged="OnHapticToggled" Label="Mobile: haptic feedback (vibration)" Color="Color.Info" />
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Vibration"
+                                       data-haptic-test="true" OnClick="TestVibration">Test</MudButton>
+                        </div>
+                        <MudText Typo="Typo.caption" Style="opacity:0.7;">Tap <b>Test</b> to feel a pulse. If you feel it but buttons don't buzz, turn the switch above <b>on</b>. If you feel nothing, your browser/device is blocking vibration (needs the OS "vibrate on touch / haptics" setting on; some browsers only vibrate over HTTPS or when installed as an app).</MudText>
+
+                        <div class="d-flex align-center justify-space-between mt-2">
+                            <MudText Typo="Typo.body2">LoRA favourites &amp; usage</MudText>
+                            <div class="d-flex gap-2">
+                                <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" OnClick="ClearLoraFavorites">Clear Favourites</MudButton>
+                                <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" OnClick="ResetLoraUsage">Reset Usage</MudButton>
+                            </div>
+                        </div>
+
+                        <MudDivider Class="my-3" />
+                        <div class="d-flex align-center justify-space-between">
+                            <div>
+                                <MudText Typo="Typo.body2" Style="font-weight:700;">Factory reset</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Resets all settings to defaults. Never deletes models or the gallery.</MudText>
+                            </div>
+                            <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small"
+                                       StartIcon="@Icons.Material.Filled.RestartAlt" OnClick="OpenFactoryReset">Factory reset…</MudButton>
+                        </div>
+                    </div>
+                </div>
+
+                </MudTabPanel>
+
+                <MudTabPanel Text="Appearance" Icon="@Icons.Material.Filled.Palette">
+                <div>
+                    <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);" Class="mb-2">Brightness</MudText>
+                    <MudButtonGroup Variant="Variant.Outlined" Size="Size.Small" Class="mb-4">
+                        <MudButton Color="Color.Primary" Variant="@(_themeMode == "Light" ? Variant.Filled : Variant.Outlined)" StartIcon="@Icons.Material.Rounded.LightMode" OnClick='@(() => SetThemeMode("Light"))'>Light</MudButton>
+                        <MudButton Color="Color.Primary" Variant="@(_themeMode == "Dark" ? Variant.Filled : Variant.Outlined)" StartIcon="@Icons.Material.Outlined.DarkMode" OnClick='@(() => SetThemeMode("Dark"))'>Dark</MudButton>
+                        <MudButton Color="Color.Primary" Variant="@(_themeMode == "Amoled" ? Variant.Filled : Variant.Outlined)" StartIcon="@Icons.Material.Filled.Bedtime" OnClick='@(() => SetThemeMode("Amoled"))'>AMOLED</MudButton>
+                    </MudButtonGroup>
+
+                    <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);" Class="mb-2">Accent colour</MudText>
+                    <div class="d-flex flex-wrap gap-3">
+                        @foreach (var a in SimpleDiffusion.Components.AppThemes.Accents)
+                        {
+                            var dark = SimpleDiffusion.Components.AppThemes.Shade(a.Color, 0.55);
+                            <div class="d-flex flex-column" style="gap:8px;">
+                                @{ var sel = string.Equals(_accentColor, a.Color, StringComparison.OrdinalIgnoreCase); }
+                                <MudTooltip Text="@a.Name">
+                                    <div @onclick="@(() => SetAccent(a.Color))"
+                                         style="@($"width:38px;height:38px;border-radius:50%;cursor:pointer;background:{a.Color};border:3px solid {(sel ? "var(--mud-palette-text-primary)" : "transparent")};box-shadow:0 1px 4px rgba(0,0,0,0.3);")"></div>
+                                </MudTooltip>
+                                @{ var selDark = string.Equals(_accentColor, dark, StringComparison.OrdinalIgnoreCase); }
+                                <MudTooltip Text="@($"Dark {a.Name}")">
+                                    <div @onclick="@(() => SetAccent(dark))"
+                                         style="@($"width:38px;height:38px;border-radius:50%;cursor:pointer;background:{dark};border:3px solid {(selDark ? "var(--mud-palette-text-primary)" : "transparent")};box-shadow:0 1px 4px rgba(0,0,0,0.3);")"></div>
+                                </MudTooltip>
+                            </div>
+                        }
+                    </div>
+
+                    <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);" Class="mb-2 mt-4">Secondary colour</MudText>
+                    <div class="d-flex flex-wrap gap-3">
+                        @foreach (var a in SimpleDiffusion.Components.AppThemes.Accents)
+                        {
+                            var dark = SimpleDiffusion.Components.AppThemes.Shade(a.Color, 0.55);
+                            <div class="d-flex flex-column" style="gap:8px;">
+                                @{ var sel = string.Equals(_secondaryColor, a.Color, StringComparison.OrdinalIgnoreCase); }
+                                <MudTooltip Text="@a.Name">
+                                    <div @onclick="@(() => SetSecondary(a.Color))"
+                                         style="@($"width:38px;height:38px;border-radius:50%;cursor:pointer;background:{a.Color};border:3px solid {(sel ? "var(--mud-palette-text-primary)" : "transparent")};box-shadow:0 1px 4px rgba(0,0,0,0.3);")"></div>
+                                </MudTooltip>
+                                @{ var selDark = string.Equals(_secondaryColor, dark, StringComparison.OrdinalIgnoreCase); }
+                                <MudTooltip Text="@($"Dark {a.Name}")">
+                                    <div @onclick="@(() => SetSecondary(dark))"
+                                         style="@($"width:38px;height:38px;border-radius:50%;cursor:pointer;background:{dark};border:3px solid {(selDark ? "var(--mud-palette-text-primary)" : "transparent")};box-shadow:0 1px 4px rgba(0,0,0,0.3);")"></div>
+                                </MudTooltip>
+                            </div>
+                        }
+                    </div>
+
+                    <MudText Typo="Typo.caption" Class="mt-2" Style="opacity:0.7;">Changes apply instantly and are saved on this device.</MudText>
+                </div>
+                </MudTabPanel>
+
+                <MudTabPanel Text="Civitai & NSFW" Icon="@Icons.Material.Filled.CloudDownload">
+                <div>
+                    <MudText Typo="Typo.subtitle1" Class="mb-2">Civitai &amp; NSFW (this device)</MudText>
+
+                    <MudTextField T="string" @bind-Value="_civitaiApiKey"
+                                  Label="Civitai API key"
+                                  HelperText="Needed for NSFW results and authenticated downloads. Stored only on this device."
+                                  Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  InputType="InputType.Password" Adornment="Adornment.End"
+                                  Class="mb-2" />
+
+                    <MudNumericField T="int" @bind-Value="_maxConcurrent" Label="Max concurrent downloads" Min="1" Max="16"
+                                     Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 240px;"
+                                     HelperText="Applies to everyone using this server." Class="mb-2" />
+
+                    <MudText Typo="Typo.subtitle2" Class="mt-2">Blur these ratings</MudText>
+                    <div class="d-flex flex-wrap">
+                        @foreach (var c in RatingCategories)
+                        {
+                            <MudCheckBox T="bool" Dense="true" Color="Color.Warning" Label="@c.Label"
+                                         Value="@HasBit(_blurMask, c.Bit)"
+                                         ValueChanged="@((bool v) => SetBlurBit(c.Bit, v))" />
+                        }
+                    </div>
+
+                    <MudText Typo="Typo.subtitle2" Class="mt-2">Hide these ratings completely</MudText>
+                    <div class="d-flex flex-wrap">
+                        @foreach (var c in RatingCategories)
+                        {
+                            <MudCheckBox T="bool" Dense="true" Color="Color.Error" Label="@c.Label"
+                                         Value="@HasBit(_hideMask, c.Bit)"
+                                         ValueChanged="@((bool v) => SetHideBit(c.Bit, v))" />
+                        }
+                    </div>
+
+                    <div class="d-flex align-center justify-space-between mt-2">
+                        <MudSwitch T="bool" @bind-Value="_revealOnHover" Label="Reveal blurred NSFW on hover" Color="Color.Warning" />
+                    </div>
+                    <div class="d-flex align-center justify-space-between">
+                        <MudSwitch T="bool" @bind-Value="_blurNames" Label="Blur NSFW model names" Color="Color.Warning" />
+                    </div>
+                    <div class="d-flex align-center justify-space-between">
+                        <MudSwitch T="bool" @bind-Value="_blockNsfwGallery" Label="Don't open NSFW in the gallery viewer" Color="Color.Error" />
+                    </div>
+                </div>
+                </MudTabPanel>
+
+                <MudTabPanel Text="Prompt &amp; Tags" Icon="@Icons.Material.Filled.Label">
+
+                @* Selected Autocomplete Dictionary *@
+                <div>
+                    <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);" Class="mb-2">
+                        Active Autocomplete Dictionary
+                    </MudText>
+                    <MudSelect T="string" Label="Dictionaries to Load" MultiSelection="true"
+                               @bind-SelectedValues="_selectedDictionaries" Variant="Variant.Outlined"
+                               HelperText="Pick one or more CSVs in Tag Path, or 'All' to load every CSV"
+                               MultiSelectionTextFunc="@(v => v.Count == 0 || v.Contains("All") ? "All / Load All CSVs" : string.Join(", ", v))">
+                        @foreach (var dict in _availableDictionaries)
+                        {
+                            <MudSelectItem T="string" Value="@dict">@(dict == "All" ? "All / Load All CSVs" : dict)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </div>
+
+                <MudDivider Class="my-4" style="opacity: 0.15;" />
+
+                @* Custom Autocomplete Keywords *@
+                <div>
+                    <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);" Class="mb-2">
+                        Custom Autocomplete Keywords
+                    </MudText>
+                    <MudTextField @bind-Value="_customTagsFileName"
+                                  Label="Custom Keywords File Name"
+                                  Variant="Variant.Outlined"
+                                  HelperText="Name of the text file inside Tag Path folder (e.g. custom_tags.txt)"
+                                  Class="mb-4" />
+                    <MudTextField T="string" @bind-Value="_customTagsContent"
+                                  Label="Edit custom keywords (one per line)"
+                                  Variant="Variant.Outlined"
+                                  Lines="8"
+                                  HelperText="Lines starting with # are comments. You can also specify category/count, e.g.: my_tag,1,100" />
+                </div>
+
+                <MudDivider Class="my-6" />
+
+                @if (_enableQuickTags)
+                {
+                    <div>
+                        <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);" Class="mb-2">
+                            Quick Tags Categories & Keyword Configuration
+                        </MudText>
+                        <MudTabs Centered="true" Position="Position.Top" MinimumTabWidth="50px" ApplyEffectsToContainer="true">
+                            <MudTabPanel Text="Visual Editor" Icon="@Icons.Material.Filled.ViewModule">
+                                @foreach (var cat in _quickTagsParsed)
+                                {
+                                    <div class="mb-3 pa-2">
+                                        <div class="d-flex align-center justify-space-between mb-1">
+                                            <MudText Typo="Typo.caption" Color="Color.Primary" Style="font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">
+                                                @cat.Key
+                                            </MudText>
+                                            <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Size="Size.Small" Color="Color.Error" OnClick="@(() => RemoveQuickTagCategory(cat.Key))" title="Remove category" />
+                                        </div>
+                                        <div class="d-flex flex-wrap gap-1">
+                                            @foreach (var tag in cat.Value.ToList())
+                                            {
+                                                var capturedTag = tag;
+                                                var capturedCat = cat.Key;
+                                                <MudChip T="string" OnClose="@(() => RemoveQuickTag(capturedCat, capturedTag))" Color="Color.Default" Size="Size.Small" Variant="Variant.Outlined">
+                                                    @capturedTag
+                                                </MudChip>
+                                            }
+                                        </div>
+                                        <div class="d-flex gap-2 mt-1">
+                                            <TagSearchField @bind-Value="_newQuickTag" TagService="TagService" Label="Add tag..." UseRibbon="@(_enableSuggestionRibbon && _isMobile)" Class="flex-grow-1" Style="max-width: 200px;" />
+                                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" OnClick="@(() => AddQuickTag(cat.Key))" Disabled="@string.IsNullOrWhiteSpace(_newQuickTag)">Add</MudButton>
+                                        </div>
+                                    </div>
+                                }
+                                <div class="d-flex gap-2 mt-2 pa-2">
+                                    <MudTextField T="string" @bind-Value="_newCategoryName" Label="New category name" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="AddQuickTagCategory" Disabled="@string.IsNullOrWhiteSpace(_newCategoryName)">Add Category</MudButton>
+                                </div>
+                            </MudTabPanel>
+                            <MudTabPanel Text="Raw Text" Icon="@Icons.Material.Filled.Code">
+                                <MudTextField T="string" @bind-Value="_quickTagsContent"
+                                              Label="Edit quick tag categories (INI format)"
+                                              Variant="Variant.Outlined"
+                                              Lines="8"
+                                              HelperText="Use [Category Name] followed by comma-separated keywords on new lines." />
+                            </MudTabPanel>
+                        </MudTabs>
+                    </div>
+                }
+
+                @if (_enableFavorites)
+                {
+                    <MudDivider Class="my-4" style="opacity: 0.15;" />
+                    <div>
+                        <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);" Class="mb-2">
+                            Favorites List Configuration
+                        </MudText>
+                        <MudTabs Centered="true" Position="Position.Top" MinimumTabWidth="50px" ApplyEffectsToContainer="true">
+                            <MudTabPanel Text="Visual Editor" Icon="@Icons.Material.Filled.ViewModule">
+                                <div class="d-flex flex-wrap gap-1 pa-2">
+                                    @foreach (var fav in _favoritesList.ToList())
+                                    {
+                                        var capturedFav = fav;
+                                        <MudChip T="string" OnClose="@(() => RemoveFavoriteChip(capturedFav))" Color="Color.Warning" Size="Size.Small" Variant="Variant.Outlined">
+                                            @capturedFav
+                                        </MudChip>
+                                    }
+                                </div>
+                                <div class="d-flex gap-2 mt-1 pa-2">
+                                    <TagSearchField @bind-Value="_newFavorite" TagService="TagService" Label="Add favorite..." UseRibbon="@(_enableSuggestionRibbon && _isMobile)" Class="flex-grow-1" Style="max-width: 200px;" />
+                                    <MudButton Variant="Variant.Outlined" Color="Color.Warning" Size="Size.Small" OnClick="AddFavoriteChip" Disabled="@string.IsNullOrWhiteSpace(_newFavorite)">Add</MudButton>
+                                </div>
+                            </MudTabPanel>
+                            <MudTabPanel Text="Raw Text" Icon="@Icons.Material.Filled.Code">
+                                <MudTextField T="string" @bind-Value="_favoritesContent"
+                                              Label="Edit favorites (one tag per line)"
+                                              Variant="Variant.Outlined"
+                                              Lines="6"
+                                              HelperText="Add or remove favorite keywords. One tag per line." />
+                            </MudTabPanel>
+                        </MudTabs>
+                    </div>
+                }
+                    </MudTabPanel>
+
+            </MudTabs>
+
+            @* Re-run the first-time setup wizard — kept at the very bottom, below every tab. *@
+            <div class="d-flex justify-center mt-4">
+                <MudButton Variant="Variant.Text" Color="Color.Default" StartIcon="@Icons.Material.Filled.RocketLaunch" OnClick="RunSetupWizard">
+                    Setup wizard
+                </MudButton>
+            </div>
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   OnClick="SaveSettings"
+                   Style="min-width: 120px;">
+            Save Settings
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .settings-dialog-content {
+        max-height: 70vh;
+        overflow-y: auto;
+        padding: 4px 4px 8px 4px;
+    }
+</style>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    private string _sdServerAddress = "";
+    private string _sdServerBatchPath = "";
+    private string _loraPath = "";
+    private string _tagPath = "";
+    private string _modelsRoot = "";
+    private string _selectedDictionary = "All";
+    private IEnumerable<string> _selectedDictionaries = new HashSet<string> { "All" };
+    private string _customTagsFileName = "custom_tags.txt";
+    private string _customTagsContent = "";
+
+    private bool _enableFrequencyTracking = true;
+    private bool _enableFavorites = true;
+    private bool _enableQuickTags = true;
+
+    // Mobile experience features (each defaults on; they only surface where relevant).
+    private bool _enableSuggestionRibbon = true;
+    private bool _enableMobileNav = true;
+
+    // Per-device (localStorage) settings.
+    private string _civitaiApiKey = "";
+    private int _blurMask;
+    private int _hideMask;
+    private bool _revealOnHover = true;
+    private bool _blurNames;
+    private bool _blockNsfwGallery;
+    private bool _autoAddTriggers = true;
+    private bool _autoplayVideos;
+    private bool _hapticFeedback;
+    private bool _optimizeLargeImages;
+    private string _lightboxSwipeUp = "close";
+    private string _lightboxSwipeDown = "none";
+    private string _themeMode = "Dark";
+    private string _accentColor = AppThemes.DefaultAccent;
+    private string _secondaryColor = AppThemes.DefaultSecondary;
+    private int _maxConcurrent = 4;
+    private int _maxResultCacheMb = 2048;
+
+    // Rating categories the per-category checkboxes operate on.
+    private static readonly (string Label, int Bit)[] RatingCategories =
+    {
+        ("PG", SimpleDiffusion.Components.Civitai.CivitaiNsfw.Pg),
+        ("PG-13", SimpleDiffusion.Components.Civitai.CivitaiNsfw.Pg13),
+        ("R", SimpleDiffusion.Components.Civitai.CivitaiNsfw.R),
+        ("X", SimpleDiffusion.Components.Civitai.CivitaiNsfw.X),
+        ("XXX", SimpleDiffusion.Components.Civitai.CivitaiNsfw.Xxx),
+    };
+
+    // Folder pickers are only offered on the server host machine.
+    private bool _isLocalHost;
+
+    private async Task BrowseFolder(Action<string> apply, string? initial)
+    {
+        var parameters = new DialogParameters { ["InitialPath"] = initial };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true, CloseOnEscapeKey = true, BackdropClick = true };
+        var dlg = await DialogService.ShowAsync<FolderPickerDialog>("Choose a folder", parameters, options);
+        var res = await dlg.Result;
+        if (res is not null && !res.Canceled && res.Data is string path && !string.IsNullOrEmpty(path))
+        {
+            apply(path);
+            StateHasChanged();
+        }
+    }
+
+    private async Task BrowseFile(Action<string> apply, string? initial, string pattern, string title)
+    {
+        // Start in the folder of the currently-set file, if it exists.
+        string? start = initial;
+        try { if (!string.IsNullOrWhiteSpace(initial) && File.Exists(initial)) start = Path.GetDirectoryName(initial); } catch { }
+
+        var parameters = new DialogParameters { ["InitialPath"] = start, ["FilePattern"] = pattern, ["Title"] = title };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true, CloseOnEscapeKey = true, BackdropClick = true };
+        var dlg = await DialogService.ShowAsync<FolderPickerDialog>(title, parameters, options);
+        var res = await dlg.Result;
+        if (res is not null && !res.Canceled && res.Data is string path && !string.IsNullOrEmpty(path))
+        {
+            apply(path);
+            StateHasChanged();
+        }
+    }
+
+    private bool HasBit(int mask, int bit) => (mask & bit) != 0;
+    private void SetBlurBit(int bit, bool on) => _blurMask = on ? _blurMask | bit : _blurMask & ~bit;
+    private void SetHideBit(int bit, bool on) => _hideMask = on ? _hideMask | bit : _hideMask & ~bit;
+    private string _quickTagsContent = "";
+    private string _favoritesContent = "";
+
+    // Visual editor state
+    private Dictionary<string, List<string>> _quickTagsParsed = new(StringComparer.OrdinalIgnoreCase);
+    private List<string> _favoritesList = new();
+    private string _newQuickTag = "";
+    private string _newCategoryName = "";
+    private string _newFavorite = "";
+
+    private List<string> _availableDictionaries = new() { "All" };
+
+    private bool _testingConnection;
+    private bool _connectionTested;
+    private bool _connectionSuccess;
+
+    private bool _pathsValidated;
+    private bool _loraPathExists;
+    private bool _tagPathExists;
+    private bool _modelsRootExists;
+    private bool _batchPathExists;
+    private bool _isMobile;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try { _isMobile = await JS.InvokeAsync<bool>("sdMobile.isMobile"); StateHasChanged(); } catch { }
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _sdServerAddress = Configuration["SdServerAddress"] ?? "http://192.168.0.92:7860/";
+        _sdServerBatchPath = Configuration["SdServerBatchPath"] ?? @"C:\ai\stable-diffusion-webui-reForge\webui-user.bat";
+        _loraPath = Configuration["BaseLoraPath"] ?? @"C:\ai\stable-diffusion-webui-reForge\models\Lora";
+        _tagPath = Configuration["TagPath"] ?? @"C:\Users\Tohru\Documents\Visual Studio 2022\Projects\SimpleDiffusion\wwwroot\tags";
+        _modelsRoot = Configuration["ModelsRoot"] ?? "";
+        _selectedDictionary = Configuration["SelectedDictionary"] ?? "All";
+        _selectedDictionaries = (_selectedDictionary)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet();
+        if (!_selectedDictionaries.Any()) _selectedDictionaries = new HashSet<string> { "All" };
+        _customTagsFileName = Configuration["CustomTagsFileName"] ?? "custom_tags.txt";
+
+        _enableFrequencyTracking = Configuration.Flag("EnableFrequencyTracking");
+        _enableFavorites = Configuration.Flag("EnableFavorites");
+        _enableQuickTags = Configuration.Flag("EnableQuickTags");
+
+        _enableSuggestionRibbon = Configuration.Flag("EnableSuggestionRibbon");
+        _enableMobileNav = Configuration.Flag("EnableMobileNav");
+
+        _isLocalHost = SimpleDiffusion.Components.Civitai.CivitaiClientHelpers.IsLocalClient(Nav);
+
+        await UiPrefs.EnsureLoadedAsync();
+        _civitaiApiKey = UiPrefs.CivitaiApiKey;
+        _blurMask = UiPrefs.BlurLevelMask;
+        _hideMask = UiPrefs.HideLevelMask;
+        _revealOnHover = UiPrefs.RevealOnHover;
+        _blurNames = UiPrefs.BlurNames;
+        _blockNsfwGallery = UiPrefs.BlockNsfwGallery;
+        _autoAddTriggers = UiPrefs.AutoAddTriggerWords;
+        _autoplayVideos = UiPrefs.AutoplayVideos;
+        _hapticFeedback = UiPrefs.HapticFeedback;
+        _optimizeLargeImages = UiPrefs.OptimizeLargeImages;
+        _lightboxSwipeUp = string.IsNullOrWhiteSpace(UiPrefs.LightboxSwipeUp) ? "close" : UiPrefs.LightboxSwipeUp;
+        _lightboxSwipeDown = string.IsNullOrWhiteSpace(UiPrefs.LightboxSwipeDown) ? "none" : UiPrefs.LightboxSwipeDown;
+        _themeMode = UiPrefs.ThemeMode ?? "Dark";
+        _accentColor = string.IsNullOrWhiteSpace(UiPrefs.AccentColor) ? AppThemes.DefaultAccent : UiPrefs.AccentColor;
+        _secondaryColor = string.IsNullOrWhiteSpace(UiPrefs.SecondaryColor) ? AppThemes.DefaultSecondary : UiPrefs.SecondaryColor;
+        _maxConcurrent = int.TryParse(Configuration["MaxConcurrentDownloads"], out var mc) ? mc : 4;
+        _maxResultCacheMb = int.TryParse(Configuration["MaxResultCacheMB"], out var rc) ? rc : 2048;
+
+        if (Directory.Exists(_tagPath))
+        {
+            LoadAvailableDictionaries();
+            await LoadCustomTagsContent();
+            await LoadQuickTagsContent();
+            LoadFavoritesContent();
+        }
+
+        RebuildVisualEditors();
+    }
+
+    // The pulse itself is fired in-gesture by the delegated pointerdown handler (via the button's
+    // data-haptic-test attribute), so it works on Firefox too; this just confirms in the UI.
+    private void TestVibration()
+        => Snackbar.Add("Sent a test pulse. Felt nothing? Vibration is blocked by the browser/OS.", Severity.Info);
+
+    // Apply (and persist) the haptic toggle immediately, so taps start/stop buzzing right away
+    // instead of only after Save + reload — the gate the per-control vibration checks.
+    private async Task OnHapticToggled(bool v)
+    {
+        _hapticFeedback = v;
+        UiPrefs.HapticFeedback = v;
+        try { await JS.InvokeVoidAsync("sdHaptic.setEnabled", v); } catch { }
+        await UiPrefs.PersistAsync();
+    }
+
+    // Appearance applies live (and persists) on each pick, like a theme switcher — independent of Save.
+    private async Task SetThemeMode(string mode)
+    {
+        _themeMode = mode;
+        UiPrefs.ThemeMode = mode;
+        await UiPrefs.SaveAsync();
+    }
+
+    private async Task SetAccent(string color)
+    {
+        _accentColor = color;
+        UiPrefs.AccentColor = color;
+        await UiPrefs.SaveAsync();
+    }
+
+    private async Task SetSecondary(string color)
+    {
+        _secondaryColor = color;
+        UiPrefs.SecondaryColor = color;
+        await UiPrefs.SaveAsync();
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    // Close Settings and (re)launch the first-run setup wizard. The server step is only offered
+    // on the machine hosting the app.
+    private async Task RunSetupWizard()
+    {
+        MudDialog.Close();
+        var parameters = new DialogParameters<OnboardingDialog> { { x => x.IncludeServerSetup, _isLocalHost } };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true, BackdropClick = false };
+        await DialogService.ShowAsync<OnboardingDialog>("", parameters, options);
+    }
+
+    private async Task LoadQuickTagsContent()
+    {
+        var cleanTagPath = _tagPath.Trim();
+        if (Directory.Exists(cleanTagPath))
+        {
+            try
+            {
+                var path = Path.Combine(cleanTagPath, "quick_tags.txt");
+                if (File.Exists(path))
+                {
+                    _quickTagsContent = await File.ReadAllTextAsync(path);
+                }
+                else
+                {
+                    _quickTagsContent = @"[Quality & Style]
+masterpiece, best quality, highly detailed, photorealistic, illustration, anime, digital art, concept art, oil painting, sketch
+
+[Subject & Layout]
+1girl, 1boy, solo, couple, group, portrait, close up, full body, cowboy shot, upper body
+
+[Environment & Lighting]
+outdoors, indoors, night, day, studio lighting, dramatic lighting, cinematic lighting, sunset, sky";
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error loading quick tags: {ex.Message}");
+            }
+        }
+    }
+
+    private void LoadFavoritesContent()
+    {
+        try
+        {
+            TagService.LoadStats();
+            _favoritesContent = string.Join("\n", TagService.GetFavorites());
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading favorites: {ex.Message}");
+        }
+    }
+
+    private void ResetFrequencyData()
+    {
+        TagService.ResetFrequencies();
+        Snackbar.Add("Tag usage frequency tracking data reset.", Severity.Success);
+    }
+
+    private void ClearAllFavorites()
+    {
+        TagService.ClearFavorites();
+        _favoritesContent = "";
+        Snackbar.Add("All favorites cleared.", Severity.Success);
+    }
+
+    private void ResetLoraUsage()
+    {
+        LoraStats.ResetUsage();
+        Snackbar.Add("LoRA usage counts reset.", Severity.Success);
+    }
+
+    private async Task OpenFactoryReset()
+    {
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dlg = await DialogService.ShowAsync<FactoryResetDialog>("Factory reset", options);
+        var res = await dlg.Result;
+        if (res is null || res.Canceled || res.Data is not FactoryResetDialog.Choice choice) return;
+
+        // 1) App settings file -> back to code defaults on next load.
+        try { var p = Path.Combine(Directory.GetCurrentDirectory(), "settings.json"); if (File.Exists(p)) File.Delete(p); }
+        catch (Exception ex) { Snackbar.Add("Couldn't reset settings.json: " + ex.Message, Severity.Error); }
+
+        // 2) Per-device settings (localStorage), optionally clearing rating overrides.
+        await UiPrefs.ResetToDefaultsAsync(choice.ResetRatings);
+
+        // 3) Optional: usage/frequency tracking (tags + LoRAs).
+        if (choice.ResetFrequency)
+        {
+            TagService.ResetFrequencies();
+            LoraStats.ResetUsage();
+        }
+
+        Snackbar.Add("Settings reset to defaults. Refresh the page to apply.", Severity.Success);
+        MudDialog.Cancel(); // close settings; nothing to save
+    }
+
+    private void ClearLoraFavorites()
+    {
+        LoraStats.ClearFavorites();
+        Snackbar.Add("LoRA favourites cleared.", Severity.Success);
+    }
+
+    private void LoadAvailableDictionaries()
+    {
+        _availableDictionaries = new() { "All" };
+        var cleanTagPath = _tagPath.Trim();
+        if (Directory.Exists(cleanTagPath))
+        {
+            try
+            {
+                var files = Directory.GetFiles(cleanTagPath, "*.csv");
+                foreach (var file in files)
+                {
+                    var name = Path.GetFileName(file);
+                    if (!string.IsNullOrEmpty(_customTagsFileName) && name.Equals(_customTagsFileName, StringComparison.OrdinalIgnoreCase)) continue;
+                    _availableDictionaries.Add(name);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error listing dictionaries: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task LoadCustomTagsContent()
+    {
+        var cleanTagPath = _tagPath.Trim();
+        if (Directory.Exists(cleanTagPath) && !string.IsNullOrEmpty(_customTagsFileName))
+        {
+            try
+            {
+                var path = Path.Combine(cleanTagPath, _customTagsFileName.Trim());
+                if (File.Exists(path))
+                {
+                    _customTagsContent = await File.ReadAllTextAsync(path);
+                }
+                else
+                {
+                    _customTagsContent = "# Define your custom tags here, one per line.\n# Format:\n# tag_name\n# tag_name,category\n# tag_name,category,count\n";
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error loading custom tags content: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task TestConnection()
+    {
+        _testingConnection = true;
+        _connectionTested = true;
+        _connectionSuccess = false;
+        StateHasChanged();
+
+        try
+        {
+            using var handler = new HttpClientHandler
+            {
+                ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true
+            };
+            using var client = new HttpClient(handler);
+            client.Timeout = TimeSpan.FromSeconds(5);
+            var address = _sdServerAddress.Trim();
+            if (!address.EndsWith("/")) address += "/";
+
+            var res = await client.GetAsync(new Uri(new Uri(address), "sdapi/v1/samplers"));
+            _connectionSuccess = res.IsSuccessStatusCode;
+        }
+        catch
+        {
+            _connectionSuccess = false;
+        }
+        finally
+        {
+            _testingConnection = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ValidatePaths()
+    {
+        _pathsValidated = true;
+        _loraPathExists = Directory.Exists(_loraPath.Trim());
+        _tagPathExists = Directory.Exists(_tagPath.Trim());
+        var modelsRoot = _modelsRoot.Trim();
+        _modelsRootExists = string.IsNullOrEmpty(modelsRoot) || Directory.Exists(modelsRoot);
+        var batch = _sdServerBatchPath.Trim();
+        _batchPathExists = string.IsNullOrEmpty(batch) || File.Exists(batch);
+
+        if (_tagPathExists)
+        {
+            LoadAvailableDictionaries();
+            await LoadCustomTagsContent();
+        }
+
+        // Clear, tab-independent feedback (the inline chips alone are easy to miss).
+        var missing = new List<string>();
+        if (!_loraPathExists) missing.Add("LoRA folder");
+        if (!_tagPathExists) missing.Add("Tag folder");
+        if (!_modelsRootExists) missing.Add("Models root");
+        if (!_batchPathExists) missing.Add("Launch script");
+        if (missing.Count == 0)
+            Snackbar.Add("All paths are valid.", Severity.Success);
+        else
+            Snackbar.Add("Not found: " + string.Join(", ", missing), Severity.Warning);
+
+        StateHasChanged();
+    }
+
+    private async Task SaveSettings()
+    {
+        try
+        {
+            var cleanSd = _sdServerAddress.Trim();
+            var cleanLora = _loraPath.Trim();
+            var cleanTag = _tagPath.Trim();
+            var cleanCustomFile = _customTagsFileName.Trim();
+
+            // Sync visual editors to raw text before saving
+            SyncVisualToRaw();
+
+            // Save settings.json
+            var path = Path.Combine(Directory.GetCurrentDirectory(), "settings.json");
+            var data = new Dictionary<string, string>
+            {
+                ["SdServerAddress"] = cleanSd,
+                ["SdServerBatchPath"] = _sdServerBatchPath.Trim(),
+                ["BaseLoraPath"] = cleanLora,
+                ["TagPath"] = cleanTag,
+                ["SelectedDictionary"] = (!_selectedDictionaries.Any() || _selectedDictionaries.Contains("All"))
+                    ? "All" : string.Join(",", _selectedDictionaries),
+                ["CustomTagsFileName"] = cleanCustomFile,
+                ["EnableFrequencyTracking"] = _enableFrequencyTracking.ToString(),
+                ["EnableFavorites"] = _enableFavorites.ToString(),
+                ["EnableQuickTags"] = _enableQuickTags.ToString(),
+                ["EnableSuggestionRibbon"] = _enableSuggestionRibbon.ToString(),
+                ["EnableMobileNav"] = _enableMobileNav.ToString()
+            };
+
+            // Models root (used by the download manager).
+            if (!string.IsNullOrWhiteSpace(_modelsRoot)) data["ModelsRoot"] = _modelsRoot.Trim();
+            else if (Configuration["ModelsRoot"] is { Length: > 0 } mr) data["ModelsRoot"] = mr;
+            data["MaxConcurrentDownloads"] = Math.Clamp(_maxConcurrent, 1, 16).ToString();
+            data["MaxResultCacheMB"] = Math.Max(256, _maxResultCacheMb).ToString();
+
+            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(path, json);
+
+            // Per-device settings persist to localStorage (not settings.json) and apply live.
+            UiPrefs.CivitaiApiKey = _civitaiApiKey?.Trim() ?? "";
+            UiPrefs.BlurLevelMask = _blurMask;
+            UiPrefs.HideLevelMask = _hideMask;
+            UiPrefs.RevealOnHover = _revealOnHover;
+            UiPrefs.BlurNames = _blurNames;
+            UiPrefs.BlockNsfwGallery = _blockNsfwGallery;
+            UiPrefs.AutoAddTriggerWords = _autoAddTriggers;
+            var autoplayChanged = UiPrefs.AutoplayVideos != _autoplayVideos;
+            UiPrefs.AutoplayVideos = _autoplayVideos;
+            UiPrefs.HapticFeedback = _hapticFeedback;
+            UiPrefs.OptimizeLargeImages = _optimizeLargeImages;
+            UiPrefs.LightboxSwipeUp = _lightboxSwipeUp;
+            UiPrefs.LightboxSwipeDown = _lightboxSwipeDown;
+            await UiPrefs.SaveAsync();
+
+            // Apply the (app-wide) download concurrency limit immediately.
+            Downloads.SetMaxConcurrent(_maxConcurrent);
+
+            // Save custom tags contents
+            if (Directory.Exists(cleanTag) && !string.IsNullOrEmpty(cleanCustomFile))
+            {
+                var customPath = Path.Combine(cleanTag, cleanCustomFile);
+                await File.WriteAllTextAsync(customPath, _customTagsContent ?? "");
+            }
+
+            // Save quick_tags.txt
+            if (Directory.Exists(cleanTag))
+            {
+                var quickTagsPath = Path.Combine(cleanTag, "quick_tags.txt");
+                await File.WriteAllTextAsync(quickTagsPath, _quickTagsContent ?? "");
+            }
+
+            // Save favorites list
+            var favList = (_favoritesContent ?? "")
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(t => t.Trim())
+                .Where(t => !string.IsNullOrEmpty(t))
+                .ToList();
+            TagService.UpdateFavorites(favList);
+
+            Snackbar.Add("Settings saved successfully!", Severity.Success);
+
+            // Autoplay toggling only fully applies to already-loaded videos after a reload.
+            if (autoplayChanged)
+                Snackbar.Add("Refresh the page for the video autoplay change to take effect.", Severity.Info);
+
+            // settings.json reloads asynchronously (reloadOnChange file watcher), so reading config
+            // right after the write often still sees the OLD values. Force a synchronous reload first
+            // so the home page picks up changes (e.g. the mobile ribbon toggle) without a page refresh.
+            (Configuration as Microsoft.Extensions.Configuration.IConfigurationRoot)?.Reload();
+
+            // Tell the home page to reload settings-derived state, then close the dialog.
+            // The home page stays mounted, so its prompt/settings/results are preserved.
+            Workspace.NotifySettingsSaved();
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to save settings: {ex.Message}", Severity.Error);
+        }
+    }
+
+    // --- Visual Editor Helpers ---
+
+    private void RebuildVisualEditors()
+    {
+        // Parse quick tags from raw text
+        _quickTagsParsed = TagService.ParseQuickTags(_quickTagsContent ?? "");
+
+        // Parse favorites from raw text
+        _favoritesList = (_favoritesContent ?? "")
+            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(t => t.Trim())
+            .Where(t => !string.IsNullOrEmpty(t))
+            .ToList();
+    }
+
+    private void SyncVisualToRaw()
+    {
+        // Rebuild quick tags raw text from parsed state
+        var sb = new System.Text.StringBuilder();
+        foreach (var cat in _quickTagsParsed)
+        {
+            sb.AppendLine($"[{cat.Key}]");
+            sb.AppendLine(string.Join(", ", cat.Value));
+            sb.AppendLine();
+        }
+        _quickTagsContent = sb.ToString().TrimEnd();
+
+        // Rebuild favorites raw text from list
+        _favoritesContent = string.Join("\n", _favoritesList);
+    }
+
+    private void RemoveQuickTagCategory(string categoryName)
+    {
+        _quickTagsParsed.Remove(categoryName);
+        SyncVisualToRaw();
+        StateHasChanged();
+    }
+
+    private void RemoveQuickTag(string categoryName, string tag)
+    {
+        if (_quickTagsParsed.TryGetValue(categoryName, out var tags))
+        {
+            tags.Remove(tag);
+            SyncVisualToRaw();
+            StateHasChanged();
+        }
+    }
+
+    private void AddQuickTag(string categoryName)
+    {
+        if (string.IsNullOrWhiteSpace(_newQuickTag)) return;
+        if (_quickTagsParsed.TryGetValue(categoryName, out var tags))
+        {
+            var trimmed = _newQuickTag.Trim();
+            if (!tags.Contains(trimmed, StringComparer.OrdinalIgnoreCase))
+            {
+                tags.Add(trimmed);
+                SyncVisualToRaw();
+            }
+        }
+        _newQuickTag = "";
+        StateHasChanged();
+    }
+
+    private void AddQuickTagCategory()
+    {
+        if (string.IsNullOrWhiteSpace(_newCategoryName)) return;
+        var name = _newCategoryName.Trim();
+        if (!_quickTagsParsed.ContainsKey(name))
+        {
+            _quickTagsParsed[name] = new List<string>();
+            SyncVisualToRaw();
+        }
+        _newCategoryName = "";
+        StateHasChanged();
+    }
+
+    private void RemoveFavoriteChip(string tag)
+    {
+        _favoritesList.Remove(tag);
+        SyncVisualToRaw();
+        StateHasChanged();
+    }
+
+    private void AddFavoriteChip()
+    {
+        if (string.IsNullOrWhiteSpace(_newFavorite)) return;
+        var trimmed = _newFavorite.Trim();
+        if (!_favoritesList.Contains(trimmed, StringComparer.OrdinalIgnoreCase))
+        {
+            _favoritesList.Add(trimmed);
+            SyncVisualToRaw();
+        }
+        _newFavorite = "";
+        StateHasChanged();
+    }
+}

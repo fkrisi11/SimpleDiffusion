@@ -1,0 +1,134 @@
+@using System.Text.RegularExpressions
+@inject IDialogService DialogService
+
+@if (Favorites != null && Favorites.Any())
+{
+    <div class="d-flex align-center mt-2 pa-1 favorites-scroll-container">
+        <MudIcon Icon="@Icons.Material.Filled.Star" Color="Color.Warning" Size="Size.Small" Class="ml-1 mr-2" />
+        <div class="d-flex gap-2 favorites-scroll-track">
+            @foreach (var tag in Favorites)
+            {
+                bool isSelected = IsTagInPrompt(tag);
+                <div class="fav-chip @(isSelected ? "selected" : "")"
+                     @onclick="@(() => ToggleTag(tag))"
+                     @ondblclick="@(() => OpenWeightSlider(tag))"
+                     title="Double-click to set weight">
+                    @tag @(isSelected ? " ✓" : "")
+                </div>
+            }
+        </div>
+    </div>
+}
+
+<style>
+    .favorites-scroll-container {
+        background: rgba(255, 184, 0, 0.05);
+        border: 1px solid rgba(255, 184, 0, 0.15);
+        border-radius: 8px;
+        overflow: hidden;
+        user-select: none;
+    }
+
+    .favorites-scroll-track {
+        overflow-x: auto;
+        white-space: nowrap;
+        flex-grow: 1;
+        padding: 4px 2px;
+        scrollbar-width: none; /* Firefox */
+    }
+
+    .favorites-scroll-track::-webkit-scrollbar {
+        display: none; /* Chrome, Safari, Opera */
+    }
+
+    .fav-chip {
+        display: inline-block;
+        padding: 4px 10px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        user-select: none;
+        transition: all 0.15s ease-in-out;
+        color: rgba(255, 255, 255, 0.8);
+    }
+
+    .fav-chip:hover {
+        background: rgba(255, 255, 255, 0.08);
+    }
+
+    .fav-chip.selected {
+        background: var(--mud-palette-warning-darken) !important;
+        border-color: var(--mud-palette-warning-lighten) !important;
+        color: white !important;
+        font-weight: 600;
+    }
+</style>
+
+@code {
+    [Parameter] public string Prompt { get; set; } = "";
+    [Parameter] public EventCallback<string> OnPromptChanged { get; set; }
+    [Parameter] public List<string> Favorites { get; set; } = new();
+
+    private bool IsTagInPrompt(string tag) => PromptTags.Contains(Prompt, tag);
+
+    private async Task ToggleTag(string tag)
+    {
+        Prompt = PromptTags.Toggle(Prompt, tag);
+        await OnPromptChanged.InvokeAsync(Prompt);
+    }
+
+    private async Task OpenWeightSlider(string tag)
+    {
+        double currentWeight = 1.0;
+        var match = Regex.Match(Prompt, $@"\({Regex.Escape(PromptTags.Escape(tag))}:(\d+(\.\d+)?)\)", RegexOptions.IgnoreCase);
+        if (match.Success && double.TryParse(match.Groups[1].Value, out var w))
+        {
+            currentWeight = w;
+        }
+
+        var parameters = new DialogParameters<WeightDialog>();
+        parameters.Add(x => x.TagName, tag);
+        parameters.Add(x => x.CurrentWeight, currentWeight);
+
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<WeightDialog>("Adjust Tag Weight", parameters, options);
+        var result = await dialog.Result;
+
+        if (result != null && !result.Canceled && result.Data is double newWeight)
+        {
+            await ApplyTagWithWeight(tag, newWeight);
+        }
+    }
+
+    private async Task ApplyTagWithWeight(string tag, double weight)
+    {
+        bool exists = IsTagInPrompt(tag);
+        var esc = PromptTags.Escape(tag);
+        string tagReplacement = weight == 1.0 ? esc : $"({esc}:{weight.ToString("0.00")})";
+
+        if (exists)
+        {
+            Prompt = PromptTags.MatchRegex(tag).Replace(Prompt, tagReplacement);
+        }
+        else
+        {
+            var clean = Prompt.Trim();
+            if (clean.EndsWith(","))
+            {
+                Prompt = clean + " " + tagReplacement + ", ";
+            }
+            else if (string.IsNullOrEmpty(clean))
+            {
+                Prompt = tagReplacement + ", ";
+            }
+            else
+            {
+                Prompt = clean + ", " + tagReplacement + ", ";
+            }
+        }
+        
+        await OnPromptChanged.InvokeAsync(Prompt);
+    }
+}

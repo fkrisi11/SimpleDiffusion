@@ -1,0 +1,96 @@
+@inject IDialogService DialogService
+@inject TagGroupService GroupStore
+@implements IDisposable
+
+@* Reusable "Prompt Tools" panel: utility bar + Tag Board (incl. Tag Groups) + Rearrange.
+   Bind it to whichever prompt it should edit via Prompt / OnPromptChanged. *@
+<div class="mt-2">
+    <MudExpansionPanels Style="background: transparent;">
+        <MudExpansionPanel Text="Prompt Tools" Style="background: transparent;">
+            <div class="d-flex justify-end mb-1">
+                <MudButton StartIcon="@Icons.Material.Filled.Casino" Variant="Variant.Text" Size="Size.Small"
+                           OnClick="OpenDynamicPromptsHelp">Dynamic prompts</MudButton>
+            </div>
+
+            <SimpleDiffusion.Components.PromptUtilityBar Prompt="@Prompt"
+                                                        OnPromptChanged="OnPromptChanged" />
+            <div class="mt-2" />
+
+            <MudTabs Centered="true" Position="Position.Top" MinimumTabWidth="50px" ApplyEffectsToContainer="true" Style="background: transparent;">
+                <MudTabPanel Text="Tag Board" Icon="@Icons.Material.Filled.AutoAwesome">
+                    <SimpleDiffusion.Components.PromptTagBoard Prompt="@Prompt"
+                                                                OnPromptChanged="OnPromptChanged"
+                                                                _tagService="_tagService"
+                                                                EnableFavorites="EnableFavorites"
+                                                                EnableFrequency="EnableFrequency"
+                                                                TagGroups="GroupStore.Groups"
+                                                                OnAppendTagGroup="AppendTagGroup"
+                                                                OnSaveTagGroup="OpenSaveTagGroupDialog"
+                                                                OnManageTagGroups="OpenManageTagGroupsDialog" />
+                </MudTabPanel>
+                <MudTabPanel Text="Rearrange Tags" Icon="@Icons.Material.Filled.Reorder">
+                    <SimpleDiffusion.Components.PromptRearrangeBoard Prompt="@Prompt"
+                                                                      OnPromptChanged="OnPromptChanged" />
+                </MudTabPanel>
+            </MudTabs>
+        </MudExpansionPanel>
+    </MudExpansionPanels>
+</div>
+
+@code {
+    [Parameter] public string Prompt { get; set; } = "";
+    [Parameter] public EventCallback<string> OnPromptChanged { get; set; }
+    [Parameter] public TagService _tagService { get; set; } = default!;
+    [Parameter] public bool EnableFavorites { get; set; } = true;
+    [Parameter] public bool EnableFrequency { get; set; } = true;
+
+    protected override void OnInitialized()
+    {
+        GroupStore.EnsureLoaded();
+        GroupStore.Changed += OnGroupsChanged;
+    }
+
+    private void OnGroupsChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => GroupStore.Changed -= OnGroupsChanged;
+
+    // Append a group's tags to the END of the bound prompt on a new line, leaving the rest intact.
+    private async Task AppendTagGroup(TagGroup group)
+    {
+        if (group is null || string.IsNullOrWhiteSpace(group.Tags)) return;
+        var current = Prompt ?? "";
+        var updated = string.IsNullOrWhiteSpace(current) ? group.Tags : current.TrimEnd() + "\n" + group.Tags;
+        await OnPromptChanged.InvokeAsync(updated);
+    }
+
+    private async Task OpenSaveTagGroupDialog()
+    {
+        var parameters = new DialogParameters<SaveTagGroupDialog>
+        {
+            { x => x.Name, "" },
+            { x => x.Tags, Prompt ?? "" } // prefill with the bound prompt
+        };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<SaveTagGroupDialog>("Save Tag Group", parameters, options);
+        var result = await dialog.Result;
+
+        if (result is { Canceled: false, Data: TagGroup g } && !string.IsNullOrWhiteSpace(g.Name))
+            GroupStore.AddOrUpdate(g.Name, g.Tags);
+    }
+
+    private async Task OpenManageTagGroupsDialog()
+    {
+        var parameters = new DialogParameters<ManageTagGroupsDialog>();
+        parameters.Add(x => x.Groups, GroupStore.Groups);
+        parameters.Add(x => x.OnGroupsUpdated, EventCallback.Factory.Create(this, GroupStore.Save));
+
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        await DialogService.ShowAsync<ManageTagGroupsDialog>("Manage Tag Groups", parameters, options);
+    }
+
+    private async Task OpenDynamicPromptsHelp()
+    {
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+        await DialogService.ShowAsync<DynamicPromptsHelpDialog>("Dynamic prompts", options);
+    }
+}

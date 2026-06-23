@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link href="MudBlazorResources/RobotoFont.css" rel="stylesheet" />
+    <link href=@Assets["_content/MudBlazor/MudBlazor.min.css"] rel="stylesheet" />
+    <ImportMap />
+    <link rel="icon" type="image/ico" href="favicon.ico" />
+
+    @* PWA: installable web app *@
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#0b0f19" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="SimpleDiffusion" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+
+    <HeadOutlet @rendermode="InteractiveServer" />
+
+    <style>
+        /* Prevent pull-to-refresh on mobile */
+        html, body {
+            overscroll-behavior-y: none;
+        }
+
+        /* On touch devices a tooltip pops up on tap and overlaps the thing you tapped — e.g. the
+           "Send" icon button's tooltip covers the first menu item. Hover tooltips don't suit touch
+           anyway, so suppress them entirely on coarse-pointer (touch-primary) devices. */
+        @@media (pointer: coarse) {
+            .mud-tooltip {
+                display: none !important;
+            }
+        }
+
+        /* Loading placeholder for result-grid tiles: a spinner sitting behind the image (above the
+           tile's grey background). While the tier is still being fetched/generated the tile shows the
+           spinner; once the image paints it covers the spinner. No per-tile state needed. */
+        .sd-tile-spinner {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: -1;
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        /* Make tagged dialogs (Settings, LoRA details, Civitai model details) span the full width
+           on phones instead of leaving cramped side margins. */
+        @@media (max-width: 600px) {
+            .mud-dialog.sd-dialog-mobile-full {
+                margin: 0 !important;
+                width: 100vw !important;
+                max-width: 100vw !important;
+                max-height: 100dvh !important;
+                border-radius: 0 !important;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <Routes @rendermode="InteractiveServer" />
+    <script src="_framework/blazor.web.js"></script>
+    <script src=@Assets["_content/MudBlazor/MudBlazor.min.js"]></script>
+    <script src="MudBlazorResources/loraGridMeasure.js"></script>
+
+    <script src="@Assets["sd-helpers.js"]"></script>
+
+    @* Register the PWA service worker (installability). *@
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('service-worker.js').catch(() => { });
+            });
+        }
+    </script>
+</body>
+
+</html>

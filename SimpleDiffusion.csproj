@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- This is a single-user local app, not a many-core web server. Workstation GC uses a much
+         smaller footprint and returns memory to the OS far sooner than the default Server GC, which
+         reserves a heap per CPU core and holds onto it (that kept the baseline ~1GB and memory high
+         after image conversions). Concurrent keeps collections from pausing the UI. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <ApplicationIcon>wwwroot\favicon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="wwwroot\MudBlazorResources\FontFaces\cyrillic-ext.woff2" />
+    <None Include="wwwroot\MudBlazorResources\FontFaces\cyrillic.woff2" />
+    <None Include="wwwroot\MudBlazorResources\FontFaces\greek-ext.woff2" />
+    <None Include="wwwroot\MudBlazorResources\FontFaces\greek.woff2" />
+    <None Include="wwwroot\MudBlazorResources\FontFaces\latin-ext.woff2" />
+    <None Include="wwwroot\MudBlazorResources\FontFaces\latin.woff2" />
+    <None Include="wwwroot\MudBlazorResources\FontFaces\math.woff2" />
+    <None Include="wwwroot\MudBlazorResources\FontFaces\symbols.woff2" />
+    <None Include="wwwroot\MudBlazorResources\FontFaces\vietnamese.woff2" />
+    <None Include="wwwroot\MudBlazorResources\RobotoFont.css" />
+  </ItemGroup>
+
+
+  <ItemGroup>
+    <PackageReference Include="MudBlazor" Version="8.15.0" />
+    <PackageReference Include="NetVips" Version="3.2.0" />
+    <PackageReference Include="NetVips.Native.win-x64" Version="8.18.3" />
+  </ItemGroup>
+
+
+  <ItemGroup>
+    <Folder Include="wwwroot\icons\" />
+  </ItemGroup>
+</Project>

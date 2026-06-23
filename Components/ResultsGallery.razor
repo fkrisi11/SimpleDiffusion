@@ -1,0 +1,237 @@
+@using System.Text.Json
+@using SimpleDiffusion.Infrastructure
+<MudPaper Class="pa-4 mt-6" Elevation="0" Width="100%" Style="background: transparent;">
+    @* Gallery Header with Download All Action *@
+    <div class="d-flex justify-end gap-2 mb-4">
+        @if (_finalImages.Any())
+        {
+            <MudButton Variant="Variant.Filled"
+                       StartIcon="@Icons.Material.Filled.Archive"
+                       Color="Color.Secondary"
+                       OnClick="DownloadAllAsZip">
+                Download Batch as ZIP
+            </MudButton>
+            <MudButton Variant="Variant.Outlined"
+                       StartIcon="@Icons.Material.Filled.Delete"
+                       Color="Color.Error"
+                       OnClick="ClearResults">
+                Clear
+            </MudButton>
+        }
+    </div>
+
+    <MudGrid Spacing="2" Class="gallery-lock">
+        @* Finished Images List *@
+        @foreach (var (img, index) in _finalImages.Select((value, i) => (value, i)))
+        {
+            <MudItem xs="12" sm="6" md="4">
+                @* Enforce a fixed box size to stop UI shifting *@
+                <MudPaper Height="400px" Width="100%"
+                          Class="d-flex align-center justify-center overflow-hidden pa-2"
+                          Style="background-color: var(--mud-palette-background-grey); position: relative"
+                          Elevation="4">
+                    <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Default" Class="sd-tile-spinner" />
+                    <MudImage Src="@($"/results/file?id={img}&w={GridThumbWidth}")"
+                              ObjectFit="ObjectFit.Contain"
+                              Class="rounded-lg cursor-pointer"
+                              Style="max-height:100%; max-width:100%;"
+                              @onclick="@(() => OpenLightbox(index))" />
+                </MudPaper>
+
+                <div style="display:flex; gap:8px; margin-top:0.5em">
+                    <MudTooltip Text="Describe image (CLIP)">
+                        <MudIconButton Icon="@Icons.Material.Filled.Psychology"
+                                       Variant="Variant.Filled"
+                                       Color="Color.Primary"
+                                       Size="Size.Small"
+                                       OnClick="@(() => InterrogateImage(index, "clip"))"
+                                       Disabled="@_captionLoading.Contains(index)" />
+                    </MudTooltip>
+
+                    <MudTooltip Text="Tags (DeepDanbooru)">
+                        <MudIconButton Icon="@Icons.Material.Filled.Label"
+                                       Variant="Variant.Filled"
+                                       Color="Color.Secondary"
+                                       Size="Size.Small"
+                                       OnClick="@(() => InterrogateImage(index, "deepdanbooru"))"
+                                       Disabled="@_captionLoading.Contains(index)" />
+                    </MudTooltip>
+
+                    <SendMenu Resolve="@(() => GalleryServer.GetResultBase64Async(img))" />
+
+                    <MudTooltip Text="Read PNG info (generation parameters)">
+                        <MudIconButton Icon="@Icons.Material.Filled.Description"
+                                       Variant="Variant.Filled" Color="Color.Info" Size="Size.Small"
+                                       OnClick="@(() => ReadPngInfo(index))" />
+                    </MudTooltip>
+
+                    @if (_pngPrompts.ContainsKey(index))
+                    {
+                        <MudTooltip Text="Add this image's prompt to the Txt2Img fields">
+                            <MudIconButton Icon="@Icons.Material.Filled.PlaylistAdd"
+                                           Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
+                                           OnClick="@(() => AddPngToPrompt(index))" />
+                        </MudTooltip>
+                    }
+
+                    <MudTooltip Text="Save to Gallery">
+                        <MudIconButton Icon="@Icons.Material.Filled.BookmarkAdd"
+                                       Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small"
+                                       OnClick="@(() => SaveToGallery(index))" />
+                    </MudTooltip>
+                </div>
+
+                @if (_captionLoading.Count != 0)
+                {
+                    <MudPaper Class="mt-2 pa-2" Elevation="1" Style="background: rgba(0,0,0,0.06);">
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="ml-2" />
+                    </MudPaper>
+                }
+
+                @if (_captions.TryGetValue(index, out var cap))
+                {
+                    <MudPaper Class="mt-2 pa-2" Elevation="1" Style="background: rgba(0,0,0,0.06);">
+                        <MudText Typo="Typo.caption" Style="white-space: pre-wrap; word-break: break-word;">
+                            @cap
+                        </MudText>
+                    </MudPaper>
+                }
+
+            </MudItem>
+        }
+
+        @* Progress/Preview Card — only shown once a real preview is available. Until then the
+           previous images stay in the gallery, so the number of visible tiles never exceeds the
+           number of images being generated. *@
+        @if (_isGenerating && !string.IsNullOrEmpty(_currentPreview))
+        {
+            <MudItem xs="12" sm="6" md="4">
+                @* Match height exactly to finished images (400px) *@
+                <MudPaper Height="400px" Width="100%"
+                          Class="pa-2 border-2 border-dashed mud-border-primary relative d-flex align-center justify-center"
+                          Style="background: rgba(0,0,0,0.05)">
+                    <MudImage Src="@_currentPreview"
+                              ObjectFit="ObjectFit.Contain"
+                              Style="height:100%; width:100%;" />
+
+                    @* Action Buttons Overlay - available while generating, even before a preview *@
+                    <div style="position:absolute; top:10px; right:10px; display:flex; gap:8px;">
+                        <MudTooltip Text="Skip current image">
+                            <MudIconButton Icon="@Icons.Material.Filled.SkipNext"
+                                           Variant="Variant.Filled"
+                                           Color="Color.Warning"
+                                           Size="Size.Small"
+                                           OnClick="Skip" />
+                        </MudTooltip>
+
+                        <MudTooltip Text="Cancel entire generation">
+                            <MudIconButton Icon="@Icons.Material.Filled.Stop"
+                                           Variant="Variant.Filled"
+                                           Color="Color.Error"
+                                           Size="Size.Small"
+                                           OnClick="Interrupt"
+                                           Disabled="_isCancelling" />
+                        </MudTooltip>
+                    </div>
+
+                    @* Progress Information at Bottom *@
+                    <div style="position:absolute; bottom:15px; width:85%; background: rgba(0,0,0,0.5); padding: 8px; border-radius: 4px;">
+                        <MudProgressLinear Color="Color.Primary" Value="_progress" Class="rounded" />
+                        <MudText Typo="Typo.caption" Align="Align.Center" Class="d-block mt-1 white-text">
+                            @(_isCancelling ? "Stopping…" : $"Batch {_batchNumber} of {_request.n_iter} ({_progress}%)")@(!_isCancelling && _eta > 0 ? $" · ~{_eta:0}s" : "")
+                        </MudText>
+                    </div>
+                </MudPaper>
+            </MudItem>
+        }
+
+        @* Skeleton placeholders for the images still queued this run (current batch is the preview
+           card / progress bar above; these are the ones after it). SkeletonCount subtracts the tiles
+           already on screen so the previous run's images (kept until the first preview) don't get an
+           empty skeleton stacked under them. *@
+        @if (_isGenerating)
+        {
+            @for (int s = 0; s < SkeletonCount; s++)
+            {
+                <MudItem xs="12" sm="6" md="4">
+                    <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="400px" Width="100%"
+                                 Animation="Animation.Wave" Class="rounded-lg" />
+                </MudItem>
+            }
+        }
+    </MudGrid>
+
+    @* In-progress indicator shown below the gallery before the first preview frame arrives (the
+       preview card takes over once a preview is available). Keeps Skip/Cancel reachable here. *@
+    @if (_isGenerating && _batchActive && string.IsNullOrEmpty(_currentPreview))
+    {
+        <div class="mt-4">
+            <div class="d-flex align-center justify-space-between mb-1">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    @(_isCancelling
+                        ? "Stopping… (finishing the current step)"
+                        : $"Generating… Batch {_batchNumber} of {_request.n_iter}" + (_progress > 0 ? $" ({_progress}%)" : "") + (_eta > 0 ? $" · ~{_eta:0}s left" : ""))
+                </MudText>
+                <div class="d-flex gap-2">
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                               StartIcon="@Icons.Material.Filled.SkipNext" OnClick="Skip">Skip</MudButton>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                               StartIcon="@Icons.Material.Filled.Stop" OnClick="Interrupt" Disabled="_isCancelling">Cancel</MudButton>
+                </div>
+            </div>
+            <MudProgressLinear Color="Color.Primary" Indeterminate="@(_progress <= 0)" Value="_progress" Rounded="true" />
+        </div>
+    }
+
+    <MudPaper>
+        @if (_parsedMetadata.Any())
+        {
+            <MudExpansionPanels Class="mt-4">
+                <MudExpansionPanel Text="Generation Details" MaxHeight="400">
+                    <TitleContent>
+                        <div class="d-flex align-center">
+                            <MudIcon Icon="@Icons.Material.Filled.Info" Class="mr-2" />
+                            <MudText>Generation Metadata</MudText>
+                        </div>
+                    </TitleContent>
+                    <ChildContent>
+                        <MudGrid Spacing="1">
+                            @foreach (var entry in _parsedMetadata)
+                            {
+                                @* Skip internal arrays to keep the list clean *@
+                                if (entry.Value is JsonElement element && element.ValueKind != JsonValueKind.Array)
+                                {
+                                    <MudItem xs="12" sm="6" md="4">
+                                        <div class="pa-2 mud-bg-background-grey rounded">
+                                            <MudText Typo="Typo.caption" Color="Color.Primary"><b>@entry.Key</b></MudText>
+                                            <MudText Typo="Typo.body2" Style="word-break: break-all;">@entry.Value.ToString()</MudText>
+                                        </div>
+                                    </MudItem>
+                                }
+                            }
+                        </MudGrid>
+                    </ChildContent>
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        }
+    </MudPaper>
+</MudPaper>
+
+@code {
+    [Parameter] public Txt2ImgRequest _request { get; set; }
+    [Parameter] public HttpClient _httpClient { get; set; }
+    [Parameter] public TagService _tagService { get; set; }
+    [Parameter] public EventCallback<bool> GenerationEnded { get; set; }
+    [Parameter] public EventCallback OnPromptChanged { get; set; }
+}
+
+<style>
+    .gallery-lock {
+        /* This tells the browser: "Do not move my scrollbar when the height of this div changes" */
+        overflow-anchor: none;
+        /* Ensure the grid doesn't collapse during re-renders */
+        min-height: 0px;
+        /* Optimization for mobile browsers */
+        content-visibility: auto;
+    }
+</style>

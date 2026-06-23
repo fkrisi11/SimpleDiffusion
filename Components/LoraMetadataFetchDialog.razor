@@ -1,0 +1,123 @@
+@inject SimpleDiffusion.Components.Civitai.CivitaiDownloadManager Downloads
+@inject SimpleDiffusion.Components.Services.UiPreferences Prefs
+@implements IDisposable
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6"><MudIcon Icon="@Icons.Material.Filled.CloudSync" Class="mr-2 mb-n1" />Fetch missing metadata</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (!_running && !_done)
+        {
+            <MudText Typo="Typo.body2" Class="mb-1">
+                @Items.Count LoRA@(Items.Count == 1 ? "" : "s") without a <code>.civitai.json</code>. Each selected file is
+                hashed and looked up on Civitai; matches get their metadata + preview written.
+            </MudText>
+            <div class="d-flex align-center justify-space-between mb-2">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">@SelectedCount selected</MudText>
+                <div>
+                    <MudButton Size="Size.Small" OnClick="@(() => ToggleAll(true))">All</MudButton>
+                    <MudButton Size="Size.Small" OnClick="@(() => ToggleAll(false))">None</MudButton>
+                </div>
+            </div>
+            <div style="max-height: 45vh; overflow:auto;">
+                @foreach (var it in Items)
+                {
+                    var item = it;
+                    <MudCheckBox T="bool" Dense="true" @bind-Value="item.Selected" Label="@item.Name" />
+                }
+            </div>
+        }
+        else
+        {
+            <MudProgressLinear Color="Color.Primary" Value="@(_total == 0 ? 0 : 100.0 * _processed / _total)" Class="my-2" Rounded="true" />
+            <MudText Typo="Typo.body2">@_processed / @_total @(_running ? $"— {_currentName}" : "")</MudText>
+            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                Matched: @_matched · No match: @_noMatch · Failed: @_failed
+            </MudText>
+            @if (_done)
+            {
+                <MudAlert Severity="Severity.Success" Dense="true" Class="mt-2">Done. @_matched got metadata.</MudAlert>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        @if (!_running && !_done)
+        {
+            <MudButton OnClick="Cancel">Cancel</MudButton>
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Start" Disabled="@(SelectedCount == 0)">
+                Fetch selected (@SelectedCount)
+            </MudButton>
+        }
+        else if (_running)
+        {
+            <MudButton Color="Color.Error" OnClick="Stop">Stop</MudButton>
+        }
+        else
+        {
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Close">Close</MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public List<FetchItem> Items { get; set; } = new();
+
+    public sealed class FetchItem
+    {
+        public string Name { get; set; } = "";
+        public string Path { get; set; } = "";
+        public bool Selected { get; set; } = true;
+    }
+
+    private bool _running, _done;
+    private int _total, _processed, _matched, _noMatch, _failed;
+    private string _currentName = "";
+    private CancellationTokenSource? _cts;
+
+    private int SelectedCount => Items.Count(i => i.Selected);
+    private void ToggleAll(bool v) { foreach (var i in Items) i.Selected = v; }
+
+    private async Task Start()
+    {
+        var selected = Items.Where(i => i.Selected).ToList();
+        if (selected.Count == 0) return;
+
+        _running = true; _done = false;
+        _total = selected.Count; _processed = _matched = _noMatch = _failed = 0;
+        _cts = new CancellationTokenSource();
+        var apiKey = string.IsNullOrWhiteSpace(Prefs.CivitaiApiKey) ? null : Prefs.CivitaiApiKey;
+        await InvokeAsync(StateHasChanged);
+
+        foreach (var it in selected)
+        {
+            if (_cts.IsCancellationRequested) break;
+            _currentName = it.Name;
+            await InvokeAsync(StateHasChanged);
+
+            try
+            {
+                var ok = await Downloads.RefreshMetadataAsync(it.Path, apiKey, _cts.Token);
+                if (ok) _matched++; else _noMatch++;
+            }
+            catch (OperationCanceledException) { break; }
+            catch { _failed++; }
+
+            _processed++;
+            await InvokeAsync(StateHasChanged);
+
+            // Rate-limit: pause between models so we don't hammer the Civitai API.
+            try { await Task.Delay(800, _cts.Token); } catch { break; }
+        }
+
+        _running = false; _done = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void Stop() => _cts?.Cancel();
+    private void Cancel() => MudDialog.Cancel();
+    private void Close() => MudDialog.Close(DialogResult.Ok(_matched));
+
+    public void Dispose() => _cts?.Cancel();
+}

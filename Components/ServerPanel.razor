@@ -1,0 +1,129 @@
+@using Microsoft.JSInterop
+@implements IDisposable
+@inject SdProcessManager Sd
+@inject IConfiguration Configuration
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+
+<div class="pa-2">
+    <div class="d-flex align-center gap-2 mb-3 flex-wrap">
+        <MudText Typo="Typo.h6">Stable Diffusion Server</MudText>
+        <MudChip T="string" Size="Size.Small" Color="@StatusColor" Variant="Variant.Filled">@Sd.Status</MudChip>
+        <MudSpacer />
+        <MudButton StartIcon="@Icons.Material.Filled.PlayArrow" Color="Color.Success" Variant="Variant.Filled" Size="Size.Small"
+                   OnClick="Start" Disabled="@Sd.IsRunning">Start</MudButton>
+        <MudButton StartIcon="@Icons.Material.Filled.Stop" Color="Color.Error" Variant="Variant.Filled" Size="Size.Small"
+                   OnClick="Stop" Disabled="@(!Sd.IsRunning)">Stop</MudButton>
+        <MudButton StartIcon="@Icons.Material.Filled.RestartAlt" Color="Color.Warning" Variant="Variant.Outlined" Size="Size.Small"
+                   OnClick="Restart">Restart</MudButton>
+        <MudButton StartIcon="@Icons.Material.Filled.ClearAll" Variant="Variant.Outlined" Size="Size.Small"
+                   OnClick="Clear">Clear</MudButton>
+        <MudButton StartIcon="@Icons.Material.Filled.OpenInNew" Variant="Variant.Outlined" Size="Size.Small"
+                   Href="@ServerUrl" Target="_blank">Open UI</MudButton>
+    </div>
+
+    <div class="d-flex align-center justify-space-between mb-1">
+        <MudText Typo="Typo.caption" Color="Color.Secondary">
+            Batch file: <span style="font-family: monospace;">@BatchPath</span> &middot; change it under Settings.
+        </MudText>
+        <MudCheckBox T="bool" Value="_autoScroll" ValueChanged="OnAutoScrollChanged" Dense="true" Size="Size.Small"
+                     Color="Color.Primary" Label="Auto-scroll" />
+    </div>
+
+    <div class="sd-console" @ref="_console">@_text</div>
+</div>
+
+<style>
+    .sd-console {
+        background: #0b0f19;
+        color: #cfd3dc;
+        font-family: monospace;
+        font-size: 0.8rem;
+        line-height: 1.35;
+        padding: 10px;
+        border: 1px solid #2a2f3a;
+        border-radius: 8px;
+        height: 55vh;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+</style>
+
+@code {
+    private ElementReference _console;
+    private string _text = "";
+    private bool _autoScroll = true;
+    private bool _attached;
+
+    protected override void OnInitialized()
+    {
+        Sd.Changed += OnChanged;
+        Refresh();
+    }
+
+    private void OnChanged() => InvokeAsync(() =>
+    {
+        Refresh();
+        StateHasChanged();
+    });
+
+    private void Refresh()
+    {
+        var snap = Sd.Snapshot();
+        var lines = snap.Count > 1500 ? snap.Skip(snap.Count - 1500) : snap;
+        _text = string.Join("\n", lines);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_attached)
+        {
+            _attached = true;
+            try { await JS.InvokeVoidAsync("sdConsole.attach", _console); } catch { }
+        }
+    }
+
+    private async Task OnAutoScrollChanged(bool value)
+    {
+        _autoScroll = value;
+        try { await JS.InvokeVoidAsync(value ? "sdConsole.pin" : "sdConsole.unpin", _console); } catch { }
+    }
+
+    private string BatchPath =>
+        Configuration["SdServerBatchPath"] ?? @"C:\ai\stable-diffusion-webui-reForge\webui-user.bat";
+
+    // The Gradio web UI is served at the same address as the API.
+    private string ServerUrl =>
+        Configuration["SdServerAddress"] ?? "http://192.168.0.92:7860/";
+
+    private void Start()
+    {
+        if (string.IsNullOrWhiteSpace(BatchPath))
+        {
+            Snackbar.Add("Set the Stable Diffusion batch file path in Settings first.", Severity.Warning);
+            return;
+        }
+        Sd.Start(BatchPath);
+    }
+
+    private void Stop() => Sd.Stop();
+
+    private async Task Restart() => await Sd.RestartAsync(BatchPath);
+
+    private void Clear() => Sd.ClearLog();
+
+    private Color StatusColor => Sd.Status switch
+    {
+        SdStatus.Running => Color.Success,
+        SdStatus.Starting => Color.Info,
+        SdStatus.Stopping => Color.Warning,
+        _ => Color.Default
+    };
+
+    public void Dispose()
+    {
+        Sd.Changed -= OnChanged;
+        try { _ = JS.InvokeVoidAsync("sdConsole.detach", _console); } catch { }
+    }
+}

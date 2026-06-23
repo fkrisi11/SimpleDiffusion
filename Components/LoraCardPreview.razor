@@ -1,0 +1,39 @@
+﻿@inject UiPreferences Prefs
+
+@if (IsVideo)
+{
+    @((MarkupString)videoHtml)
+}
+else
+{
+    <img class="@Class" src="@Url" loading="lazy" />
+}
+
+@code {
+    [Parameter] public string Url { get; set; } = "";
+    [Parameter] public string Ext { get; set; } = "";
+    [Parameter] public string Class { get; set; } = "lora-img";
+
+    private bool IsVideo =>
+        Ext.Equals(".webm", StringComparison.OrdinalIgnoreCase) ||
+        Ext.Equals(".mp4", StringComparison.OrdinalIgnoreCase);
+
+    private string Mime => "video/mp4";
+
+    string videoHtml =>
+        $"<video class=\"{Class}\" " +
+        $"preload=\"metadata\" " +
+        $"playsinline " +
+        $"loop " +
+        $"muted=\"muted\" " +
+        (Prefs.AutoplayVideos ? "autoplay=\"autoplay\" " : "") +
+        $">" +
+        $"<source src=\"{Url}\" type=\"{Mime}\" />" +
+        $"</video>";
+}
+
+<style>
+    .lora-img {
+        pointer-events: none;
+    }
+</style>

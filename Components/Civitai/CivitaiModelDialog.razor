@@ -1,0 +1,524 @@
+@using SimpleDiffusion.Components.Civitai
+@implements IDisposable
+@inject CivitaiDownloadManager Downloads
+@inject IDialogService DialogService
+@inject NavigationManager Nav
+@inject HttpClient Http
+@inject UiPreferences Prefs
+@inject ISnackbar Snackbar
+@inject CrossTab CrossTab
+
+<MudDialog Class="civitai-model-dialog sd-dialog-mobile-full">
+    <TitleContent>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudText Typo="Typo.h6">@Model.Name</MudText>
+            <MudChip T="string" Size="Size.Small" Color="Color.Primary">@Model.Type</MudChip>
+            @if (Model.Nsfw)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Error">NSFW</MudChip>
+            }
+        </MudStack>
+    </TitleContent>
+
+    <DialogContent>
+        <MudStack Spacing="3">
+
+            @* ---- Version selector ---- *@
+            @if (_dropdownVersions.Count > 1)
+            {
+                <MudSelect T="int" Label="Version" Value="_versionId" ValueChanged="OnVersionChanged" Dense="true">
+                    @foreach (var v in _dropdownVersions)
+                    {
+                        <MudSelectItem T="int" Value="v.Id">
+                            @(Downloads.IsDownloaded(v) ? "✓ " : "")@v.Name (@v.BaseModel)
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+            }
+
+            @* ---- Meta / stats ---- *@
+            <div class="civitai-meta-row">
+                <span class="civitai-stat"><b>ID:</b>&nbsp;<MudLink Href="@($"https://civitai.com/models/{Model.Id}")" Target="_blank">@Model.Id</MudLink></span>
+                @if (_version?.BaseModel is { } bm)
+                {
+                    <span class="civitai-stat"><b>Base model:</b>&nbsp;@bm</span>
+                }
+                @if (Model.Creator?.Username is { } user)
+                {
+                    <span class="civitai-stat"><b>Creator:</b>&nbsp;@user</span>
+                }
+                @if (Model.Stats is { } s)
+                {
+                    <span class="civitai-stat"><MudIcon Icon="@Icons.Material.Filled.Download" Size="Size.Small" /> @s.DownloadCount.ToString("N0")</span>
+                    <span class="civitai-stat"><MudIcon Icon="@Icons.Material.Filled.ThumbUp" Size="Size.Small" /> @s.ThumbsUpCount.ToString("N0")</span>
+                    @if (s.RatingCount > 0)
+                    {
+                        <span class="civitai-stat"><MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" /> @s.Rating.ToString("0.0") (@s.RatingCount.ToString("N0"))</span>
+                    }
+                    else if (s.ApprovalRate is { } rate)
+                    {
+                        <span class="civitai-stat"><MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" /> @((rate * 100).ToString("0"))% (@((s.ThumbsUpCount + s.ThumbsDownCount).ToString("N0")) votes)</span>
+                    }
+                }
+                @if (ModelLevel is > 1 || Model.Nsfw)
+                {
+                    <span class="civitai-stat"><b>NSFW:</b>&nbsp;@CivitaiNsfw.Label(ModelLevel)</span>
+                }
+                @if (_version?.PrimaryFile is { } f)
+                {
+                    <span class="civitai-stat"><b>Size:</b>&nbsp;@FormatKB(f.SizeKB)</span>
+                }
+            </div>
+
+            @* ---- Trained / trigger words ---- *@
+            @if (_version is not null && _version.TrainedWords.Count > 0)
+            {
+                <div>
+                    <MudText Typo="Typo.subtitle2" Class="mb-1">Trigger words</MudText>
+                    <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                        @foreach (var w in _version.TrainedWords)
+                        {
+                            <MudChip T="string" Size="Size.Small" OnClick="@(() => Copy(w))" Icon="@Icons.Material.Filled.ContentCopy">@w</MudChip>
+                        }
+                    </MudStack>
+                </div>
+            }
+
+            @* ---- Tags ---- *@
+            @if (Model.Tags.Count > 0)
+            {
+                <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                    @foreach (var t in Model.Tags.Take(20))
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@t</MudChip>
+                    }
+                </MudStack>
+            }
+
+            @* ---- Previews / Description tabs ---- *@
+            <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-4">
+                <MudTabPanel Text="@($"Previews ({_version?.Images.Count ?? 0})")" Icon="@Icons.Material.Filled.Collections">
+                    @if (_version is not null && _version.Images.Count > 0)
+                    {
+                        <div class="civitai-gallery">
+                            @for (var i = 0; i < _version.Images.Take(40).Count(); i++)
+                            {
+                                var idx = i;
+                                var img = _version.Images[idx];
+                                <div class="civitai-gallery-row">
+                                    @{ var blurClass = (Prefs.ShouldBlur(ModelLevel) || Prefs.ShouldBlur(img.NsfwLevel)) ? " nsfw-blur" : ""; }
+                                    <div class="civitai-gallery-thumb" @onclick="@(() => OpenFullRes(idx))" title="Click to view full resolution">
+                                        @if (!_loadedThumbs.Contains(idx))
+                                        {
+                                            <div class="civitai-thumb-spinner"><MudProgressCircular Indeterminate="true" Size="Size.Small" /></div>
+                                        }
+                                        @if (img.RenderAsVideo)
+                                        {
+                                            <video src="@ProxyUrl(img, 450)" muted loop autoplay="@Prefs.AutoplayVideos" playsinline preload="metadata" class="civitai-gallery-media civ-novol@(blurClass)"
+                                                   @onloadeddata="@(() => MarkThumbLoaded(idx))"></video>
+                                        }
+                                        else
+                                        {
+                                            <img src="@ProxyUrl(img, 450)" loading="lazy" class="civitai-gallery-media@(blurClass)"
+                                                 @onload="@(() => MarkThumbLoaded(idx))" @onerror="@(() => MarkThumbLoaded(idx))" />
+                                        }
+                                        <div class="civitai-zoom-hint"><MudIcon Icon="@Icons.Material.Filled.ZoomIn" Size="Size.Small" /></div>
+                                        @if (img.IsNsfw)
+                                        {
+                                            <div class="civitai-nsfw-badge">NSFW</div>
+                                        }
+                                    </div>
+
+                                    <div class="civitai-gallery-meta">
+                                        @if (!string.IsNullOrWhiteSpace(img.Prompt))
+                                        {
+                                            <MudText Typo="Typo.caption" Class="civitai-prompt-label">Prompt</MudText>
+                                            <div class="civitai-prompt">@img.Prompt</div>
+                                            <MudButton Size="Size.Small" Variant="Variant.Text"
+                                                       StartIcon="@Icons.Material.Filled.ContentCopy"
+                                                       OnClick="@(() => Copy(img.Prompt!))">Copy prompt</MudButton>
+                                        }
+                                        else
+                                        {
+                                            <MudText Typo="Typo.caption" Class="civitai-prompt-label">No prompt metadata</MudText>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2">No previews for this version.</MudText>
+                    }
+                </MudTabPanel>
+
+                <MudTabPanel Text="Description" Icon="@Icons.Material.Filled.Description">
+                    @if (!string.IsNullOrWhiteSpace(Model.Description))
+                    {
+                        <div class="civitai-description">@((MarkupString)Model.Description!)</div>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2">No description provided.</MudText>
+                    }
+                </MudTabPanel>
+            </MudTabs>
+
+            @* ---- Download progress ---- *@
+            @if (_dl is not null)
+            {
+                <MudPaper Class="pa-3" Outlined="true">
+                    @switch (_dl.Status)
+                    {
+                        case DownloadStatus.Downloading:
+                            <MudText Typo="Typo.body2">Downloading @_dl.FileName — @_dl.Percent.ToString("0")%</MudText>
+                            <MudProgressLinear Value="@_dl.Percent" Color="Color.Primary" Class="my-1" />
+                            <MudText Typo="Typo.caption">@FormatBytes(_dl.BytesReceived) / @FormatBytes(_dl.TotalBytes)</MudText>
+                            break;
+                        case DownloadStatus.Completed:
+                            <MudAlert Severity="Severity.Success" Dense="true">Saved to @_dl.TargetPath</MudAlert>
+                            break;
+                        case DownloadStatus.Failed:
+                            <MudAlert Severity="Severity.Error" Dense="true">Download failed: @_dl.Error</MudAlert>
+                            break;
+                        case DownloadStatus.Cancelled:
+                            <MudAlert Severity="Severity.Warning" Dense="true">Cancelled.</MudAlert>
+                            break;
+                    }
+                </MudPaper>
+            }
+        </MudStack>
+    </DialogContent>
+
+    <DialogActions>
+        @if (_version is not null)
+        {
+            <MudText Typo="Typo.caption" Class="mr-auto ml-3">→ @Downloads.ResolveFolder(Model.Type, _version.BaseModel, Model.Name)</MudText>
+        }
+        @if (AnyDiskPath is not null)
+        {
+            <MudButton Variant="Variant.Text" Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.Style"
+                       OnClick="ShowInLoraBrowser">
+                Show in LoRA browser
+            </MudButton>
+        }
+        @if (AnyDiskPath is not null && CivitaiClientHelpers.IsLocalClient(Nav))
+        {
+            <MudButton Variant="Variant.Text" Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.FolderOpen"
+                       OnClick="OpenContainingFolder">
+                Open folder
+            </MudButton>
+        }
+        @if (_dropdownVersions.Count > 1)
+        {
+            <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.DownloadForOffline"
+                       OnClick="DownloadAllVersions">
+                Download all versions
+            </MudButton>
+        }
+        @if (_dl?.Status == DownloadStatus.Downloading)
+        {
+            <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.Pause" OnClick="PauseDownload">Pause</MudButton>
+            <MudButton Size="Size.Small" Color="Color.Error" OnClick="CancelDownload">Cancel</MudButton>
+        }
+        else if (_dl?.Status == DownloadStatus.Paused)
+        {
+            <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="ResumeDownload">Resume</MudButton>
+            <MudButton Size="Size.Small" Color="Color.Error" OnClick="CancelDownload">Cancel</MudButton>
+        }
+        else
+        {
+            <MudButton Color="Color.Primary" Size="Size.Small"
+                       Variant="Variant.Filled"
+                       StartIcon="@Icons.Material.Filled.Download"
+                       Disabled="@(_version?.PrimaryFile is null)"
+                       OnClick="StartDownload">
+                @(SelectedOnDisk ? "Download again" : "Download")
+            </MudButton>
+        }
+        <MudButton Size="Size.Small" OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    /* Let the action buttons wrap instead of overflowing the dialog on narrow (phone) screens. */
+    .civitai-model-dialog .mud-dialog-actions {
+        flex-wrap: wrap;
+        gap: 4px;
+        justify-content: flex-end;
+    }
+
+    .civitai-gallery {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        max-height: 460px;
+        overflow-y: auto;
+        padding-right: 6px;
+    }
+    .civitai-gallery-row {
+        display: grid;
+        grid-template-columns: 180px 1fr;
+        gap: 12px;
+        align-items: start;
+    }
+    .civitai-gallery-thumb {
+        position: relative;
+        border-radius: 8px;
+        overflow: hidden;
+        aspect-ratio: 3 / 4;
+        background: #111;
+        cursor: zoom-in;
+    }
+    .civitai-gallery-media {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+    .civitai-thumb-spinner {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1;
+    }
+    .civitai-zoom-hint {
+        position: absolute;
+        bottom: 6px;
+        right: 6px;
+        background: rgba(0,0,0,0.6);
+        color: #fff;
+        border-radius: 6px;
+        padding: 2px;
+        opacity: 0;
+        transition: opacity 150ms ease;
+    }
+    .civitai-gallery-thumb:hover .civitai-zoom-hint { opacity: 1; }
+    .civitai-meta-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px 20px;
+    }
+    .civitai-stat {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 0.875rem;
+        line-height: 1.4;
+    }
+    .nsfw-blur { filter: blur(28px); transition: filter 0.15s ease; }
+    html.nsfw-hover .civitai-gallery-thumb:hover .nsfw-blur { filter: none; }
+    .civitai-gallery-meta { min-width: 0; }
+    .civitai-prompt-label { font-weight: 700; opacity: 0.7; }
+    .civitai-prompt {
+        font-size: 12px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 180px;
+        overflow-y: auto;
+    }
+    .civitai-description {
+        max-height: 380px;
+        overflow-y: auto;
+        font-size: 13px;
+        line-height: 1.5;
+    }
+    .civitai-description img { max-width: 100%; height: auto; }
+    .civitai-nsfw-badge {
+        position: absolute;
+        top: 6px;
+        left: 6px;
+        background: rgba(200,0,0,0.85);
+        color: #fff;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 1px 6px;
+        border-radius: 4px;
+    }
+
+    @@media screen and (max-width: 600px) {
+        .civitai-gallery-row { grid-template-columns: 120px 1fr; }
+    }
+</style>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+
+    [Parameter] public CivitaiModel Model { get; set; } = default!;
+
+    /// <summary>Base models selected in the search — restricts the version dropdown to compatible ones.</summary>
+    [Parameter] public List<string>? CompatibleBaseModels { get; set; }
+
+    private int _versionId;
+    private CivitaiModelVersion? _version;
+    private CivitaiDownload? _dl;
+    private readonly HashSet<int> _loadedThumbs = new();
+
+    // Civitai models always carry a rating from the API, so no manual override here.
+    private int? ModelLevel => Model.NsfwLevel;
+
+    private void MarkThumbLoaded(int idx)
+    {
+        if (_loadedThumbs.Add(idx)) StateHasChanged();
+    }
+    private List<CivitaiModelVersion> _dropdownVersions = new();
+
+    // Live checks (verify the file still exists), so deleting in Explorer flips these back.
+    private bool SelectedOnDisk => _version is not null && Downloads.FindOnDisk(_version) is not null;
+    private string? AnyDiskPath => Downloads.FindAnyOnDisk(Model);
+
+    protected override void OnInitialized()
+    {
+        // Restrict to compatible base models when the search filtered by them.
+        _dropdownVersions = (CompatibleBaseModels is { Count: > 0 })
+            ? Model.ModelVersions.Where(v => v.BaseModel is not null && CompatibleBaseModels.Contains(v.BaseModel)).ToList()
+            : Model.ModelVersions.ToList();
+        if (_dropdownVersions.Count == 0)
+            _dropdownVersions = Model.ModelVersions.ToList(); // never leave it empty
+
+        _version = _dropdownVersions.FirstOrDefault() ?? Model.LatestVersion;
+        _versionId = _version?.Id ?? 0;
+        _dl = _version is not null ? Downloads.Get(_version.Id) : null;
+        Downloads.Changed += OnDownloadsChanged;
+        Prefs.Changed += OnDownloadsChanged;
+    }
+
+    private void DownloadAllVersions()
+    {
+        Downloads.StartAll(Model, Prefs.CivitaiApiKey);
+        StateHasChanged();
+    }
+
+    private void OnVersionChanged(int id)
+    {
+        _versionId = id;
+        _version = Model.ModelVersions.FirstOrDefault(v => v.Id == id);
+        _dl = _version is not null ? Downloads.Get(_version.Id) : null;
+        _loadedThumbs.Clear();
+        StateHasChanged();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) await Prefs.EnsureLoadedAsync();
+    }
+
+    private void StartDownload()
+    {
+        if (_version is null) return;
+        _dl = Downloads.Start(Model, _version, Prefs.CivitaiApiKey);
+        StateHasChanged();
+    }
+
+    private async Task OpenContainingFolder()
+    {
+        var path = (_version is not null ? Downloads.FindOnDisk(_version) : null) ?? AnyDiskPath;
+        if (path is not null)
+            await CivitaiClientHelpers.OpenFolderAsync(Http, path);
+    }
+
+    /// <summary>Switch to the LoRA browser and locate this downloaded model there.</summary>
+    private void ShowInLoraBrowser()
+    {
+        var path = (_version is not null ? Downloads.FindOnDisk(_version) : null) ?? AnyDiskPath;
+        if (path is null) return;
+        CrossTab.RequestJumpToLora(Path.GetFileNameWithoutExtension(path));
+        MudDialog.Close();
+    }
+
+    private void CancelDownload()
+    {
+        if (_version is not null) Downloads.Cancel(_version.Id);
+    }
+
+    private void PauseDownload()
+    {
+        if (_version is not null) Downloads.Pause(_version.Id);
+    }
+
+    private void ResumeDownload()
+    {
+        if (_version is not null) Downloads.Resume(_version.Id);
+    }
+
+    /// <summary>Open the shared full-screen gallery at the clicked image, full resolution.</summary>
+    private async Task OpenFullRes(int index)
+    {
+        if (_version is null) return;
+
+        var clicked = (index >= 0 && index < _version.Images.Count) ? _version.Images[index] : null;
+        if (Prefs.BlockNsfwGallery && (Prefs.ShouldBlur(ModelLevel) || Prefs.ShouldBlur(clicked?.NsfwLevel)))
+        {
+            Snackbar.Add("NSFW gallery viewing is disabled in settings.", Severity.Info);
+            return;
+        }
+
+        var urls = _version.Images.Select(i => FullUrl(i)).ToList();
+        var parameters = new DialogParameters
+        {
+            ["AllImages"] = urls,
+            ["SelectedIndex"] = index
+        };
+        var options = new DialogOptions
+        {
+            CloseButton = false, // ImageDialog has its own close button
+            MaxWidth = MaxWidth.False,
+            FullWidth = false,
+            FullScreen = true,
+            BackdropClick = true,
+            CloseOnEscapeKey = true
+        };
+        await DialogService.ShowAsync<SimpleDiffusion.Components.ImageDialog>(string.Empty, parameters, options);
+    }
+
+    private async Task Copy(string text)
+    {
+        try { await JS.InvokeVoidAsync("navigator.clipboard.writeText", text); } catch { }
+    }
+
+    /// <summary>Thumbnail-sized proxy URL (no width transform for videos — they use a different one).</summary>
+    private static string ProxyUrl(CivitaiImage img, int width)
+    {
+        if (string.IsNullOrWhiteSpace(img.Url)) return "images/card-no-preview.png";
+        var url = img.RenderAsVideo ? img.Url : CivitaiImageUrl.WithWidth(img.Url, width);
+        return "/civitai-image?url=" + Uri.EscapeDataString(url);
+    }
+
+    /// <summary>Large/full-resolution proxy URL for the lightbox.</summary>
+    private static string FullUrl(CivitaiImage img)
+    {
+        if (string.IsNullOrWhiteSpace(img.Url)) return "images/card-no-preview.png";
+        var url = img.RenderAsVideo ? img.Url : CivitaiImageUrl.WithWidth(img.Url, 1024);
+        return "/civitai-image?url=" + Uri.EscapeDataString(url);
+    }
+
+    private void OnDownloadsChanged() => InvokeAsync(StateHasChanged);
+
+    private void Close() => MudDialog.Close();
+
+    public void Dispose()
+    {
+        Downloads.Changed -= OnDownloadsChanged;
+        Prefs.Changed -= OnDownloadsChanged;
+    }
+
+    private static string FormatKB(double kb) => FormatBytes((long)(kb * 1024));
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        double v = bytes;
+        int u = 0;
+        while (v >= 1024 && u < units.Length - 1) { v /= 1024; u++; }
+        return $"{v:0.#} {units[u]}";
+    }
+}

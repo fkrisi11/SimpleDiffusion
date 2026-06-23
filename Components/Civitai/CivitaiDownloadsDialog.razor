@@ -1,0 +1,189 @@
+@using SimpleDiffusion.Components.Civitai
+@implements IDisposable
+@inject CivitaiDownloadManager Downloads
+@inject NavigationManager Nav
+@inject HttpClient Http
+@inject CrossTab CrossTab
+
+<MudDialog>
+    <TitleContent>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIcon Icon="@Icons.Material.Filled.Download" />
+            <MudText Typo="Typo.h6">Downloads</MudText>
+            @if (Downloads.ActiveCount > 0)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Primary">@Downloads.ActiveCount active</MudChip>
+            }
+        </MudStack>
+    </TitleContent>
+
+    <DialogContent>
+        @{ var all = Downloads.All; }
+        @if (all.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info">No downloads this session yet.</MudAlert>
+        }
+        else
+        {
+            <MudList T="string" Dense="true">
+                @foreach (var d in all)
+                {
+                    <MudListItem T="string">
+                        <div class="dl-row">
+                            <div class="dl-icon">
+                                @switch (d.Status)
+                                {
+                                    case DownloadStatus.Downloading:
+                                        <MudProgressCircular Indeterminate="false" Value="@d.Percent" Size="Size.Small" Color="Color.Primary" />
+                                        break;
+                                    case DownloadStatus.Paused:
+                                        <MudIcon Icon="@Icons.Material.Filled.PauseCircle" Color="Color.Default" />
+                                        break;
+                                    case DownloadStatus.Completed:
+                                        <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" />
+                                        break;
+                                    case DownloadStatus.Failed:
+                                        <MudIcon Icon="@Icons.Material.Filled.Error" Color="Color.Error" />
+                                        break;
+                                    case DownloadStatus.Cancelled:
+                                        <MudIcon Icon="@Icons.Material.Filled.Cancel" Color="Color.Warning" />
+                                        break;
+                                    default:
+                                        <MudIcon Icon="@Icons.Material.Filled.Schedule" />
+                                        break;
+                                }
+                            </div>
+
+                            <div class="dl-main">
+                                <MudText Typo="Typo.body2" Class="dl-title">@d.ModelName</MudText>
+                                <MudText Typo="Typo.caption" Class="dl-file">@d.FileName</MudText>
+
+                                @if (d.Status == DownloadStatus.Queued)
+                                {
+                                    <div class="dl-status">Queued…</div>
+                                }
+                                else if (d.Status is DownloadStatus.Downloading or DownloadStatus.Paused)
+                                {
+                                    <MudProgressLinear Value="@d.Percent" Color="@(d.Status == DownloadStatus.Paused ? Color.Default : Color.Primary)" Class="my-1" />
+                                    <MudText Typo="Typo.caption">
+                                        @FormatBytes(d.BytesReceived) / @FormatBytes(d.TotalBytes) (@d.Percent.ToString("0")%)@(d.Status == DownloadStatus.Paused ? " — paused" : "")
+                                    </MudText>
+                                }
+                                else if (d.Status == DownloadStatus.Completed)
+                                {
+                                    <div class="dl-status dl-path">@d.TargetPath</div>
+                                }
+                                else if (d.Status == DownloadStatus.Failed)
+                                {
+                                    <div class="dl-status dl-err"><b>Download failed:</b><br />@d.Error</div>
+                                }
+                                else if (d.Status == DownloadStatus.Cancelled)
+                                {
+                                    <div class="dl-status dl-warn">Cancelled</div>
+                                }
+                            </div>
+
+                            <div class="dl-actions">
+                                @if (d.Status == DownloadStatus.Queued)
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
+                                                   title="Cancel" OnClick="@(() => Downloads.Cancel(d.VersionId))" />
+                                }
+                                else if (d.Status == DownloadStatus.Downloading)
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Filled.Pause" Size="Size.Small"
+                                                   title="Pause" OnClick="@(() => Downloads.Pause(d.VersionId))" />
+                                    <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
+                                                   title="Cancel" OnClick="@(() => Downloads.Cancel(d.VersionId))" />
+                                }
+                                else if (d.Status == DownloadStatus.Paused)
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small"
+                                                   title="Resume" OnClick="@(() => Downloads.Resume(d.VersionId))" />
+                                    <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
+                                                   title="Cancel" OnClick="@(() => Downloads.Cancel(d.VersionId))" />
+                                }
+                                else if (d.Status == DownloadStatus.Failed)
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
+                                                   title="Retry" OnClick="@(() => Downloads.Resume(d.VersionId))" />
+                                }
+                                else if (d.Status == DownloadStatus.Cancelled)
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
+                                                   title="Restart" OnClick="@(() => Downloads.Restart(d.VersionId))" />
+                                }
+                                else if (d.Status == DownloadStatus.Completed)
+                                {
+                                    @if (System.IO.File.Exists(d.TargetPath))
+                                    {
+                                        <MudIconButton Icon="@Icons.Material.Filled.Style" Size="Size.Small"
+                                                       title="Show in LoRA browser" OnClick="@(() => ShowInLora(d.TargetPath))" />
+                                    }
+                                    @if (_isLocal && System.IO.File.Exists(d.TargetPath))
+                                    {
+                                        <MudIconButton Icon="@Icons.Material.Filled.FolderOpen" Size="Size.Small"
+                                                       title="Open folder" OnClick="@(() => OpenFolder(d.TargetPath))" />
+                                    }
+                                }
+                            </div>
+                        </div>
+                    </MudListItem>
+                }
+            </MudList>
+        }
+    </DialogContent>
+
+    <DialogActions>
+        <MudButton StartIcon="@Icons.Material.Filled.ClearAll"
+                   Disabled="@(Downloads.All.Count == 0)"
+                   OnClick="Downloads.ClearFinished">
+            Clear finished
+        </MudButton>
+        <MudButton OnClick="@(() => MudDialog.Close())">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .dl-row { display: grid; grid-template-columns: 32px 1fr 40px; gap: 10px; align-items: start; width: 100%; }
+    .dl-icon { display: flex; justify-content: center; padding-top: 2px; }
+    .dl-main { min-width: 0; }
+    .dl-title { font-weight: 600; }
+    .dl-file, .dl-path { opacity: 0.7; word-break: break-all; }
+    .dl-status { display: block; margin-top: 4px; font-size: 12px; word-break: break-word; }
+    .dl-err { color: var(--mud-palette-error); }
+    .dl-warn { color: var(--mud-palette-warning); }
+</style>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    private bool _isLocal;
+
+    protected override void OnInitialized()
+    {
+        _isLocal = CivitaiClientHelpers.IsLocalClient(Nav);
+        Downloads.Changed += OnChanged;
+    }
+
+    private async Task OpenFolder(string path) => await CivitaiClientHelpers.OpenFolderAsync(Http, path);
+
+    private void ShowInLora(string path)
+    {
+        CrossTab.RequestJumpToLora(System.IO.Path.GetFileNameWithoutExtension(path));
+        MudDialog.Close();
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Downloads.Changed -= OnChanged;
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        double v = bytes;
+        int u = 0;
+        while (v >= 1024 && u < units.Length - 1) { v /= 1024; u++; }
+        return $"{v:0.#} {units[u]}";
+    }
+}

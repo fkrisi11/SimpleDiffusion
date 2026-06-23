@@ -1,0 +1,41 @@
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Delete" Class="mr-2 mb-n1" />
+            Delete versions
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-2">
+            This folder contains multiple versions. Tick the ones to permanently delete
+            (the model file and its preview/metadata sidecars).
+        </MudText>
+        @foreach (var v in Versions)
+        {
+            <MudCheckBox T="bool" @bind-Value="v.Selected" Dense="true" Label="@v.Name" />
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => MudDialog.Cancel())">Cancel</MudButton>
+        <MudButton Color="Color.Error" Variant="Variant.Filled"
+                   Disabled="@(!Versions.Any(v => v.Selected))"
+                   OnClick="Confirm">
+            Delete selected
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public List<VersionItem> Versions { get; set; } = new();
+
+    public sealed class VersionItem
+    {
+        public string Path { get; set; } = "";
+        public string Name { get; set; } = "";
+        public bool Selected { get; set; }
+    }
+
+    private void Confirm() =>
+        MudDialog.Close(DialogResult.Ok(Versions.Where(v => v.Selected).Select(v => v.Path).ToList()));
+}

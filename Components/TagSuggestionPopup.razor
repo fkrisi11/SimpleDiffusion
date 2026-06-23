@@ -1,0 +1,96 @@
+@* The tag-autocomplete dropdown, extracted from PromptField so the same suggestion presentation
+   (category colours, counts, favourite stars) can be reused wherever tag suggestions are listed.
+   Pure presentation: the parent owns the suggestion list, open state and selected index, and handles
+   Apply / ToggleFavorite. *@
+<MudPopover Open="Open" AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft">
+    <div id="tag-suggestions-scroll" style="max-height:400px; overflow-y:auto;">
+        <MudPaper Style="background-color: #0b0f19; color: #e0e0e0; border: 1px solid #4b5563;" Elevation="4">
+            <MudList T="TagItem" Padding="false">
+                @if (Suggestions != null)
+                {
+                    @for (int i = 0; i < Suggestions.Count; i++)
+                    {
+                        var index = i;
+                        var tag = Suggestions[i];
+                        <MudListItem id="@($"tag-suggestion-{index}")"
+                                     onmousedown="@(() => OnApply.InvokeAsync(tag))"
+                                     Class="@(index == SelectedIndex ? "selected-item-bg" : "")"
+                                     Style="padding: 4px 12px;">
+                            <div class="d-flex justify-space-between align-center w-100">
+                                <span style="color: @TagColors.Category(tag, TagService) !important; font-weight: 500;">
+                                    @tag.DisplayText
+                                </span>
+                                <div class="d-flex align-center" style="min-width: 64px; justify-content: flex-end;">
+                                    <span style="color: #6b6f7b; font-size: 0.75rem; white-space: nowrap;">
+                                        @tag.FormattedCount
+                                    </span>
+                                    @if (!tag.IsLora && EnableFavorites)
+                                    {
+                                        bool isFav = TagService.IsFavorite(tag.Name);
+                                        <span @onmousedown:stopPropagation="true"
+                                              @onmousedown:preventDefault="true"
+                                              @onclick:stopPropagation="true"
+                                              @onmousedown="@(e => OnToggleFavorite.InvokeAsync(tag.Name))"
+                                              style="display: inline-flex; margin-left: 4px;">
+                                            <MudIconButton Icon="@(isFav ? Icons.Material.Filled.Star : Icons.Material.Outlined.StarBorder)"
+                                                           Color="@(isFav ? Color.Warning : Color.Default)"
+                                                           Size="Size.Small"
+                                                           Style="padding: 2px;" />
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span style="display: inline-block; width: 28px;"></span>
+                                    }
+                                </div>
+                            </div>
+                        </MudListItem>
+                    }
+                }
+            </MudList>
+        </MudPaper>
+    </div>
+</MudPopover>
+
+@code {
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public List<TagItem>? Suggestions { get; set; }
+    [Parameter] public int SelectedIndex { get; set; }
+    [Parameter] public bool EnableFavorites { get; set; } = true;
+    [Parameter] public TagService TagService { get; set; } = default!;
+
+    /// <summary>A suggestion was chosen (click / mousedown).</summary>
+    [Parameter] public EventCallback<TagItem> OnApply { get; set; }
+    /// <summary>The favourite star was toggled for a tag name.</summary>
+    [Parameter] public EventCallback<string> OnToggleFavorite { get; set; }
+}
+
+<style>
+    .selected-item-bg {
+        background-color: #374151 !important;
+    }
+
+    /* Dark scrollbar for the prompt popup */
+    .mud-popover ::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    .mud-popover ::-webkit-scrollbar-track {
+        background: #0b0f19;
+    }
+
+    .mud-popover ::-webkit-scrollbar-thumb {
+        background-color: #4b5563;
+        border-radius: 6px;
+    }
+
+        .mud-popover ::-webkit-scrollbar-thumb:hover {
+            background-color: #6b7280;
+        }
+
+    /* Firefox */
+    .mud-popover {
+        scrollbar-width: thin;
+        scrollbar-color: #4b5563 #0b0f19;
+    }
+</style>

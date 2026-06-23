@@ -1,0 +1,422 @@
+﻿@using Microsoft.AspNetCore.Components.Web.Virtualization
+
+<MudDrawerContainer Class="h-100 folder-browser">
+    <MudDrawer @bind-Open="_foldersOpen"
+               Anchor="Anchor.Left"
+               Variant="DrawerVariant.Temporary"
+               Elevation="1"
+               Style="@(_foldersOpen ? "" : "visibility: hidden")">
+        <MudText Typo="Typo.subtitle1" Class="pa-3">Folders</MudText>
+        <MudTreeView T="FolderNode"
+                     Items="_folderTree"
+                     Hover="true"
+                     Dense="true"
+                     @bind-SelectedValue="_selectedTreeItem"
+                     @bind-SelectedValues="_selectedTreeItems">
+            <ItemTemplate>
+                <MudTreeViewItem Expanded="@context.Expanded"
+                                 ExpandedChanged="@((bool expanded) => OnNodeExpanded(context, expanded))"
+                                 Items="@GetTreeItemChildren(context)"
+                                 Value="@context.Value"
+                                 Text="@context.Text"
+                                 Icon="@context.Icon"
+                                 OnClick="@(() => OnFolderSelected(context))" />
+            </ItemTemplate>
+        </MudTreeView>
+    </MudDrawer>
+</MudDrawerContainer>
+
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="px-4 pt-4">
+            <MudIconButton Icon="@Icons.Material.Filled.Folder"
+                           OnClick="@(()=> _foldersOpen = !_foldersOpen)"
+                           title="Browse folders" />
+
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                           OnClick="ReloadModels"
+                           title="Reload models &amp; ControlNets from disk" />
+
+            <MudText Typo="Typo.caption">Card size</MudText>
+            <MudSlider T="int"
+                       Min="80" Max="600" Step="10"
+                       Value="@_cardWidth"
+                       ValueChanged="OnCardWidthChanged"
+                       Immediate="true"
+                       Style="width: 260px;" />
+
+            <MudText Typo="Typo.caption">@_cardWidth px</MudText>
+            <MudIconButton Icon="@Icons.Material.Filled.RestartAlt" Size="Size.Small"
+                           title="Reset card size" OnClick="ResetCardSize" />
+            <MudText Typo="Typo.caption" Class="ml-auto">
+                <b>Total:</b> @(_all == null ? "0" : ((_filtered.Count() == _all.Count) ? (_all.Count().ToString()) : (_all.Count() + " (" + _filtered.Count() + ")")))
+            </MudText>
+        </MudStack>
+
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="px-4 pb-2" Wrap="Wrap.Wrap">
+            <MudTextField T="string"
+                          Class="lora-search"
+                          Placeholder="Search LoRAs..."
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          Clearable="true"
+                          Immediate="true"
+                          Value="@_searchQuery"
+                          ValueChanged="OnSearchChanged" />
+
+            <MudSelect T="LoraSort" Label="Sort" Value="_sortBy" ValueChanged="OnSortChanged"
+                       Dense="true" Margin="Margin.Dense" Style="width: 140px;">
+                <MudSelectItem T="LoraSort" Value="LoraSort.Name">Name</MudSelectItem>
+                <MudSelectItem T="LoraSort" Value="LoraSort.Age">Age</MudSelectItem>
+                <MudSelectItem T="LoraSort" Value="LoraSort.FileSize">File Size</MudSelectItem>
+                <MudSelectItem T="LoraSort" Value="LoraSort.Type">Type</MudSelectItem>
+                <MudSelectItem T="LoraSort" Value="LoraSort.Usage">Usage</MudSelectItem>
+                <MudSelectItem T="LoraSort" Value="LoraSort.Random">Random</MudSelectItem>
+            </MudSelect>
+
+            <MudTooltip Text="@(_sortDesc ? "Reversed order" : "Normal order")">
+                <MudIconButton Icon="@Icons.Material.Filled.SwapVert"
+                               Color="@(_sortDesc ? Color.Primary : Color.Default)"
+                               Variant="Variant.Outlined" Size="Size.Small" OnClick="ToggleSortDir" />
+            </MudTooltip>
+
+            @if (_sortBy == LoraSort.Random)
+            {
+                <MudTooltip Text="Reshuffle">
+                    <MudIconButton Icon="@Icons.Material.Filled.Shuffle" Variant="Variant.Outlined"
+                                   Size="Size.Small" OnClick="Reshuffle" />
+                </MudTooltip>
+            }
+
+            <MudTooltip Text="@(_favoritesOnly ? "Showing favourites only" : "Show favourites only")">
+                <MudIconButton Icon="@(_favoritesOnly ? Icons.Material.Filled.Star : Icons.Material.Outlined.StarBorder)"
+                               Color="@(_favoritesOnly ? Color.Warning : Color.Default)"
+                               Variant="Variant.Outlined" Size="Size.Small"
+                               OnClick="ToggleFavoritesOnly" />
+            </MudTooltip>
+
+            @if (_availableBaseModels.Count > 0)
+            {
+                <MudSelect T="string" Label="Base model" MultiSelection="true"
+                           SelectedValues="_selectedBaseModels" SelectedValuesChanged="OnBaseModelsChanged"
+                           Dense="true" Margin="Margin.Dense" Style="width: 200px;" Clearable="true"
+                           MultiSelectionTextFunc="@(vals => vals.Count == 0 ? "" : vals.Count == 1 ? vals[0] : $"{vals.Count} base models")">
+                    @foreach (var bm in _availableBaseModels)
+                    {
+                        <MudSelectItem T="string" Value="@bm">@bm</MudSelectItem>
+                    }
+                </MudSelect>
+            }
+
+            <MudMenu Label="Missing info" Variant="Variant.Outlined" EndIcon="@Icons.Material.Filled.FilterList"
+                     Dense="true" ActivationEvent="@MouseEvent.LeftClick">
+                <div class="px-3 py-1">
+                    <MudCheckBox T="bool" Dense="true" Label="No preview image"
+                                 Value="_missPreview" ValueChanged="@((bool v) => ToggleMissing("preview", v))" />
+                    <MudCheckBox T="bool" Dense="true" Label="No .civitai.json"
+                                 Value="_missJson" ValueChanged="@((bool v) => ToggleMissing("json", v))" />
+                    <MudCheckBox T="bool" Dense="true" Label="No .txt"
+                                 Value="_missTxt" ValueChanged="@((bool v) => ToggleMissing("txt", v))" />
+                    <MudCheckBox T="bool" Dense="true" Label="No .html"
+                                 Value="_missHtml" ValueChanged="@((bool v) => ToggleMissing("html", v))" />
+                </div>
+            </MudMenu>
+
+            <MudTooltip Text="Look up LoRAs missing a .civitai.json on Civitai (by file hash)">
+                <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.CloudSync" OnClick="OpenFetchMetadata">
+                    Fetch missing
+                </MudButton>
+            </MudTooltip>
+        </MudStack>
+
+        @if (!_isLoaded)
+        {
+            <MudAlert Severity="Severity.Info">Loading Loras...</MudAlert>
+        }
+        else
+        {
+            <div @ref="_scrollHost" id="lora-scroll-container" style="height: 80vh; overflow-y: auto;">
+                <div class="lora-grid pa-4" style="@($"--cols: {_columns}; --cardw: {_cardWidth}px; --cardh: {_cardHeight}px;")">
+                    <Virtualize @ref="_virtualize"
+                                ItemsProvider="LoadRows"
+                                Context="row"
+                                ItemSize="@RowHeight"
+                                OverscanCount="6">
+
+                        <div class="lora-row">
+                            @foreach (var lora in row)
+                            {
+                                <div class="lora-cell" @key="lora.path">
+                                    <MudPaper Class="lora-card shadow-md cursor-pointer overflow-hidden"
+                                              @onclick="@(() => AddLora(lora))">
+
+                                        <!-- Hover actions -->
+                                        <div class="lora-actions" @onclick:stopPropagation="true">
+                                            <MudIconButton Icon="@(IsFavorite(lora) ? Icons.Material.Filled.Star : Icons.Material.Outlined.StarBorder)"
+                                                           Size="Size.Medium"
+                                                           Color="@(IsFavorite(lora) ? Color.Warning : Color.Inherit)"
+                                                           Class="lora-action-btn"
+                                                           title="Favourite"
+                                                           OnClick="@(() => ToggleFavorite(lora))" />
+                                            <MudIconButton Icon="@Icons.Material.Filled.Info"
+                                                           Size="Size.Medium"
+                                                           Color="Color.Inherit"
+                                                           Class="lora-action-btn"
+                                                           title="View details"
+                                                           OnClick="@(() => OpenMetaDialog(lora))" />
+                                        </div>
+
+                                        @if (IsFavorite(lora))
+                                        {
+                                            <MudIcon Icon="@Icons.Material.Filled.Star" Class="lora-fav-badge" Size="Size.Small" />
+                                        }
+
+                                        @{
+                                            var ext = Path.GetExtension(lora.previewPath ?? "");
+                                        }
+
+                                        @if (!string.IsNullOrEmpty(lora.type))
+                                        {
+                                            <div class="lora-type-chip">
+                                                @lora.type
+                                                @{ var vc = VersionsInFolder(lora.path); }
+                                                @if (vc > 1)
+                                                {
+                                                    <span class="lora-ver-count" title="@($"{vc} versions downloaded")">@vc</span>
+                                                }
+                                            </div>
+                                        }
+
+                                        <LoraCardPreview Url="@PreviewUrl(lora)"
+                                                         Ext="@ext"
+                                                         Class="@(Blur(lora) ? "lora-img nsfw-blur" : "lora-img")" />
+
+                                        <div class="lora-footer">
+                                            <div class="lora-title-wrap">
+                                                <MudText Typo="Typo.caption" Class="@($"lora-title{(BlurName(lora) ? " nsfw-name-blur" : "")}")">
+                                                    @lora.name
+                                                </MudText>
+                                            </div>
+                                        </div>
+                                    </MudPaper>
+                                </div>
+                            }
+                        </div>
+
+                    </Virtualize>
+                </div>
+            </div>
+        }
+
+
+<style>
+    .lora-grid {
+        --cols: 11;
+        --cardw: 180px;
+        --cardh: 264px;
+    }
+
+    .lora-row {
+        display: grid;
+        grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+        gap: 16px;
+        align-items: start;
+    }
+
+    /* Persistent favourite marker (top-right), shown even when not hovering. */
+    .lora-fav-badge {
+        position: absolute;
+        top: 6px;
+        right: 6px;
+        z-index: 3;
+        color: #ffca28;
+        pointer-events: none;
+        filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6));
+    }
+
+    .lora-card {
+        width: var(--cardw);
+        height: var(--cardh);
+        border-radius: 12px;
+        position: relative;
+        /* PREVENT SELECTION */
+        user-select: none; /* Standard syntax */
+        -webkit-user-select: none; /* Safari */
+        -moz-user-select: none; /* Firefox */
+        -ms-user-select: none; /* Legacy IE/Edge */
+        /* PREVENT DRAGGING */
+        -webkit-user-drag: none;
+    }
+
+    .lora-img {
+        width: 100%;
+        height: calc(var(--cardh) - 56px);
+        object-fit: cover;
+        display: block;
+        /* PREVENT SELECTION */
+        pointer-events: none; /* Prevents the image from being "picked up" by the mouse */
+        user-select: none;
+        -webkit-user-select: none; /* Safari */
+        -moz-user-select: none; /* Firefox */
+        -ms-user-select: none; /* Legacy IE/Edge */
+        /* PREVENT DRAGGING */
+        -webkit-user-drag: none;
+    }
+
+    video.lora-img { /* some browsers need this */
+        background: #111;
+    }
+
+    /* Overlay footer that expands upward */
+    .lora-footer {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 10px 12px;
+        background: linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0.45), rgba(0,0,0,0.0) );
+        color: white;
+    }
+
+    /* Animatable container */
+    .lora-title-wrap {
+        overflow: hidden;
+        max-height: 3em; /* ~2 lines */
+        transition: max-height 220ms ease; /* easing here */
+    }
+
+    /* Expand smoothly on hover */
+    .lora-card:hover .lora-title-wrap {
+        max-height: 7.2em; /* ~6 lines */
+    }
+
+    .lora-title {
+        font-weight: 700;
+        line-height: 1.2;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+
+    .lora-search {
+        width: min(520px, 100%);
+    }
+
+    .lora-type-chip {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        z-index: 2;
+        background: rgba(0,0,0,0.65);
+        color: #fff;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 6px;
+    }
+    .lora-ver-count {
+        display: inline-block;
+        margin-left: 4px;
+        background: rgba(255,255,255,0.22);
+        border-radius: 999px;
+        padding: 0 6px;
+        font-size: 10px;
+    }
+
+    .nsfw-blur {
+        filter: blur(28px);
+        transition: filter 0.15s ease;
+    }
+    html.nsfw-hover .lora-card:hover .nsfw-blur {
+        filter: none;
+    }
+
+    .nsfw-name-blur {
+        filter: blur(6px);
+        transition: filter 0.15s ease;
+    }
+    html.nsfw-hover .lora-card:hover .nsfw-name-blur {
+        filter: none;
+    }
+
+    .lora-actions {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        display: flex;
+        gap: 8px;
+        z-index: 3;
+        opacity: 0;
+        transform: translateY(-4px);
+        pointer-events: none;
+        transition: opacity 160ms ease, transform 160ms ease;
+    }
+
+    .lora-card:hover .lora-actions {
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+    }
+
+    /* Touch devices have no hover — keep the card actions visible and tappable. */
+    @@media (pointer: coarse) {
+        .lora-actions {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+    }
+
+    .lora-action-btn {
+        background: rgba(0,0,0,0.55);
+        border: 1px solid rgba(255,255,255,0.15);
+        backdrop-filter: blur(6px);
+    }
+
+        .lora-action-btn:hover {
+            background: rgba(0,0,0,0.8);
+        }
+
+    .lora-card:active {
+        transform: scale(0.98);
+        transition: transform 0.1s;
+    }
+
+
+    .lora-card:has(.lora-actions:active),
+    .lora-card:has(.lora-action-btn:active) {
+        transform: none;
+    }
+
+    /* No background fade when drawer is visible */
+    .mud-overlay .mud-overlay-scrim.mud-overlay-dark {
+        background-color: rgba(0,0,0,0);
+    }
+
+    /* Only change the opacity
+    Keep the background color */
+    .folder-browser aside {
+        background-color: rgb(from var(--mud-palette-drawer-background) r g b / 0.9);
+    }
+
+    @@media screen and (max-width: 1920px) {
+        .folder-browser {
+            width: 90%;
+        }
+
+            .folder-browser .mud-drawer.mud-drawer-temporary.mud-drawer-pos-left {
+                width: 90%;
+            }
+    }
+    
+    @@media screen and (min-width: 1920px)
+    {
+    .folder-browser {
+        width: 40em;
+    }
+
+        .folder-browser .mud-drawer.mud-drawer-temporary.mud-drawer-pos-left {
+            width: 40em;
+        }
+    }
+</style>

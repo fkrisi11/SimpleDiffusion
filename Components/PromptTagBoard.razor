@@ -1,0 +1,298 @@
+@using System.Text.RegularExpressions
+@inject ISnackbar Snackbar
+
+<MudPaper Class="pa-2 mt-2 tag-board-container" Elevation="1">
+    <MudTabs Centered="true" Position="Position.Top" MinimumTabWidth="50px" ApplyEffectsToContainer="true">
+        @* Tab 1: Standard Styles / Categories *@
+        <MudTabPanel Text="Quick Tags" Icon="@Icons.Material.Filled.AutoAwesome">
+            <div class="d-flex justify-end mb-2 pa-1">
+                <MudSelect T="string" @bind-Value="_quickTagSort" Label="Sort" Variant="Variant.Outlined" Dense="true" Style="max-width: 160px;">
+                    <MudSelectItem Value="@("Default")">Default</MudSelectItem>
+                    <MudSelectItem Value="@("A-Z")">A-Z</MudSelectItem>
+                    <MudSelectItem Value="@("Most Used")">Most Used</MudSelectItem>
+                </MudSelect>
+            </div>
+            @foreach (var cat in Categories)
+            {
+                <div class="mb-3">
+                    <MudText Typo="Typo.caption" Color="Color.Primary" Style="font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">
+                        @cat.Key
+                    </MudText>
+                    <div class="d-flex flex-wrap gap-2 mt-1">
+                        @foreach (var tag in SortTags(cat.Value, _quickTagSort))
+                        {
+                            bool isSelected = IsTagInPrompt(tag);
+                            bool isFav = EnableFavorites && _tagService.IsFavorite(tag);
+                            <div class="tag-item-wrapper @(isSelected ? "selected" : "")">
+                                <span @onclick="@(() => ToggleTag(tag))" class="tag-click-span">
+                                    @tag @(isSelected ? " ✓" : "")
+                                </span>
+                                @if (EnableFavorites)
+                                {
+                                    <MudIconButton Icon="@(isFav ? Icons.Material.Filled.Star : Icons.Material.Outlined.StarBorder)"
+                                                   Color="@(isFav ? Color.Warning : Color.Default)"
+                                                   Size="Size.Small"
+                                                   Class="tag-fav-btn"
+                                                   OnClick="@(() => ToggleFavorite(tag))" />
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </MudTabPanel>
+
+        @* Tab 2: Favorites *@
+        @if (EnableFavorites)
+        {
+            <MudTabPanel Text="Favorites" Icon="@Icons.Material.Filled.Star">
+                <div class="d-flex justify-end mb-2 pa-1">
+                    <MudSelect T="string" @bind-Value="_favSort" Label="Sort" Variant="Variant.Outlined" Dense="true" Style="max-width: 160px;">
+                        <MudSelectItem Value="@("Default")">Default</MudSelectItem>
+                        <MudSelectItem Value="@("A-Z")">A-Z</MudSelectItem>
+                        <MudSelectItem Value="@("Most Used")">Most Used</MudSelectItem>
+                    </MudSelect>
+                </div>
+                <div class="d-flex flex-wrap gap-2 pa-2">
+                    @if (!GetFavorites().Any())
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Default" Class="italic pa-4">
+                            No favorite tags yet. Click the star icon on autocomplete suggestions or Quick Tags to pin them here!
+                        </MudText>
+                    }
+                    else
+                    {
+                        @foreach (var tag in SortTags(GetFavorites(), _favSort))
+                        {
+                            bool isSelected = IsTagInPrompt(tag);
+                            <div class="tag-item-wrapper @(isSelected ? "selected" : "")">
+                                <span @onclick="@(() => ToggleTag(tag))" class="tag-click-span">
+                                    @tag @(isSelected ? " ✓" : "")
+                                </span>
+                                <MudIconButton Icon="@Icons.Material.Filled.Star"
+                                               Color="Color.Warning"
+                                               Size="Size.Small"
+                                               Class="tag-fav-btn"
+                                               OnClick="@(() => ToggleFavorite(tag))" />
+                            </div>
+                        }
+                    }
+                </div>
+            </MudTabPanel>
+        }
+
+        @* Tab: Tag Groups (only shown when the parent supplies them — i.e. the txt2img tab) *@
+        @if (TagGroups != null)
+        {
+            <MudTabPanel Text="Tag Groups" Icon="@Icons.Material.Filled.Sell">
+                <div class="d-flex flex-wrap gap-2 pa-2 align-center">
+                    @if (TagGroups.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Default" Class="italic pa-2">
+                            No tag groups yet. Save the current prompt as a group with the + button.
+                        </MudText>
+                    }
+                    else
+                    {
+                        @foreach (var g in TagGroups)
+                        {
+                            var grp = g;
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
+                                       OnClick="@(() => OnAppendTagGroup.InvokeAsync(grp))" Style="text-transform:none;" title="@grp.Tags">
+                                @grp.Name
+                            </MudButton>
+                        }
+                    }
+                    <MudTooltip Text="Save current prompt as a tag group">
+                        <MudIconButton Icon="@Icons.Material.Filled.Add" Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined" OnClick="@(() => OnSaveTagGroup.InvokeAsync())" />
+                    </MudTooltip>
+                    @if (TagGroups.Count > 0)
+                    {
+                        <MudTooltip Text="Manage tag groups">
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Secondary" Variant="Variant.Outlined" OnClick="@(() => OnManageTagGroups.InvokeAsync())" />
+                        </MudTooltip>
+                    }
+                </div>
+            </MudTabPanel>
+        }
+
+        @* Tab 3: Frequent Tags *@
+        @if (EnableFrequency)
+        {
+            <MudTabPanel Text="Frequent" Icon="@Icons.Material.Filled.History">
+                <div class="pa-2">
+                    @if (!GetFrequent().Any())
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Default" Class="italic pa-4">
+                            Generate images to populate your most frequently used prompt tags here!
+                        </MudText>
+                    }
+                    else
+                    {
+                        <div class="d-flex justify-space-between align-center mb-3">
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">Your most used prompt keywords:</MudText>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" OnClick="ResetFrequencies">
+                                Reset Frequency
+                            </MudButton>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2">
+                            @foreach (var tag in GetFrequent())
+                            {
+                                bool isSelected = IsTagInPrompt(tag);
+                                bool isFav = EnableFavorites && _tagService.IsFavorite(tag);
+                                <div class="tag-item-wrapper @(isSelected ? "selected" : "")">
+                                    <span @onclick="@(() => ToggleTag(tag))" class="tag-click-span">
+                                        @tag @(isSelected ? " ✓" : "")
+                                    </span>
+                                    @if (EnableFavorites)
+                                    {
+                                        <MudIconButton Icon="@(isFav ? Icons.Material.Filled.Star : Icons.Material.Outlined.StarBorder)"
+                                                       Color="@(isFav ? Color.Warning : Color.Default)"
+                                                       Size="Size.Small"
+                                                       Class="tag-fav-btn"
+                                                       OnClick="@(() => ToggleFavorite(tag))" />
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </MudTabPanel>
+        }
+    </MudTabs>
+</MudPaper>
+
+<style>
+    .tag-board-container {
+        background: rgba(30, 30, 45, 0.25) !important;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 12px;
+    }
+
+    .tag-item-wrapper {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        padding: 2px 8px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.12);
+        background: rgba(255,255,255,0.03);
+        user-select: none;
+        transition: all 0.15s ease-in-out;
+    }
+
+    .tag-item-wrapper.selected {
+        background: var(--mud-palette-primary) !important;
+        border-color: var(--mud-palette-primary-lighten) !important;
+    }
+
+    .tag-click-span {
+        cursor: pointer;
+        font-size: 0.8rem;
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.85);
+        padding: 4px 2px;
+    }
+
+    .tag-item-wrapper.selected .tag-click-span {
+        color: white !important;
+        font-weight: 600;
+    }
+
+    .tag-item-wrapper:hover {
+        background: rgba(255,255,255,0.07);
+    }
+
+    .tag-item-wrapper.selected:hover {
+        background: var(--mud-palette-primary-darken) !important;
+    }
+
+    .tag-fav-btn {
+        padding: 2px !important;
+    }
+</style>
+
+@code {
+    [Parameter] public string Prompt { get; set; } = "";
+    [Parameter] public EventCallback<string> OnPromptChanged { get; set; }
+    [Parameter] public TagService _tagService { get; set; } = default!;
+
+    [Parameter] public bool EnableFavorites { get; set; } = true;
+    [Parameter] public bool EnableFrequency { get; set; } = true;
+
+    // Tag Groups are optional: only the txt2img tab passes these, which is what shows the tab.
+    [Parameter] public IReadOnlyList<TagGroup>? TagGroups { get; set; }
+    [Parameter] public EventCallback<TagGroup> OnAppendTagGroup { get; set; }
+    [Parameter] public EventCallback OnSaveTagGroup { get; set; }
+    [Parameter] public EventCallback OnManageTagGroups { get; set; }
+
+    private string _quickTagSort = "Default";
+    private string _favSort = "Default";
+
+    private readonly Dictionary<string, List<string>> _defaultCategories = new()
+    {
+        ["Quality & Style"] = new() { "masterpiece", "best quality", "highly detailed", "photorealistic", "illustration", "anime", "digital art", "concept art", "oil painting", "sketch" },
+        ["Subject & Layout"] = new() { "1girl", "1boy", "solo", "couple", "group", "portrait", "close up", "full body", "cowboy shot", "upper body" },
+        ["Environment & Lighting"] = new() { "outdoors", "indoors", "night", "day", "studio lighting", "dramatic lighting", "cinematic lighting", "sunset", "sky" }
+    };
+
+    private Dictionary<string, List<string>> Categories
+    {
+        get
+        {
+            if (_tagService?.QuickTags != null && _tagService.QuickTags.Any())
+            {
+                return _tagService.QuickTags;
+            }
+            return _defaultCategories;
+        }
+    }
+
+    private IEnumerable<string> SortTags(IEnumerable<string> tags, string sortMode)
+    {
+        return sortMode switch
+        {
+            "A-Z" => tags.OrderBy(t => t, StringComparer.OrdinalIgnoreCase),
+            "Most Used" => tags.OrderByDescending(t => _tagService.GetFrequency(t)).ThenBy(t => t, StringComparer.OrdinalIgnoreCase),
+            _ => tags
+        };
+    }
+
+    private bool IsTagInPrompt(string tag) => PromptTags.Contains(Prompt, tag);
+
+    private async Task ToggleTag(string tag)
+    {
+        Prompt = PromptTags.Toggle(Prompt, tag);
+        await OnPromptChanged.InvokeAsync(Prompt);
+    }
+
+    private void ToggleFavorite(string tag)
+    {
+        if (_tagService.IsFavorite(tag))
+        {
+            _tagService.RemoveFavorite(tag);
+        }
+        else
+        {
+            _tagService.AddFavorite(tag);
+        }
+        StateHasChanged();
+    }
+
+    private List<string> GetFavorites()
+    {
+        return _tagService.GetFavorites().ToList();
+    }
+
+    private List<string> GetFrequent()
+    {
+        return _tagService.GetFrequentTags(20).ToList();
+    }
+
+    private void ResetFrequencies()
+    {
+        _tagService.ResetFrequencies();
+        Snackbar.Add("Tag usage frequencies reset.", Severity.Info);
+        StateHasChanged();
+    }
+}

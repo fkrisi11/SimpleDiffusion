@@ -1,0 +1,38 @@
+<MudDialog>
+    <DialogContent>
+        <div class="d-flex flex-column gap-4 pa-2">
+            <MudText Typo="Typo.body1">Modify weight for tag: <b>@TagName</b></MudText>
+            <MudSlider @bind-Value="Weight" Min="0" Max="2.0" Step="0.05" Color="Color.Primary" ValueLabel="true">
+                Weight: @Weight.ToString("0.00")
+            </MudSlider>
+            <MudText Align="Align.Center" Style="font-family: monospace; font-size: 1.1rem;" Color="Color.Secondary">
+                @(Weight == 1.0 ? TagName : $"({TagName}:{Weight.ToString("0.00")})")
+            </MudText>
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">OK</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public string TagName { get; set; } = "";
+    [Parameter] public double CurrentWeight { get; set; } = 1.0;
+
+    private double Weight { get; set; } = 1.0;
+
+    protected override void OnInitialized()
+    {
+        Weight = CurrentWeight;
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private void Submit()
+    {
+        MudDialog.Close(DialogResult.Ok(Weight));
+    }
+}

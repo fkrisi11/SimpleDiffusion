@@ -1,0 +1,410 @@
+@using SimpleDiffusion.Components.Civitai
+
+<div class="civitai-root" @ref="_rootEl">
+
+@* ---- Search bar (always visible) ---- *@
+<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="px-4 pt-4" Wrap="Wrap.Wrap">
+    <MudTextField T="string"
+                  Class="civitai-search"
+                  Placeholder="Search by name..."
+                  Variant="Variant.Outlined"
+                  Margin="Margin.Dense"
+                  Adornment="Adornment.Start"
+                  AdornmentIcon="@Icons.Material.Filled.Search"
+                  Clearable="true"
+                  Immediate="true"
+                  @bind-Value="_searchQuery"
+                  OnKeyDown="OnSearchKeyDown" />
+
+    <MudTextField T="string"
+                  Style="width: 130px;"
+                  Placeholder="Model ID"
+                  Variant="Variant.Outlined"
+                  Margin="Margin.Dense"
+                  Clearable="true"
+                  Immediate="true"
+                  @bind-Value="_modelIdQuery"
+                  OnKeyDown="OnSearchKeyDown" />
+
+    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+               StartIcon="@Icons.Material.Filled.Search"
+               OnClick="OnSearchClicked" Disabled="_loading">
+        Search
+    </MudButton>
+
+    <MudButton Variant="Variant.Outlined"
+               StartIcon="@Icons.Material.Filled.FilterList"
+               OnClick="@(() => _filtersOpen = !_filtersOpen)">
+        Filters
+    </MudButton>
+
+    <MudBadge Content="Downloads.ActiveCount" Color="Color.Primary" Overlap="true"
+              Visible="@(Downloads.ActiveCount > 0)" Class="ml-auto">
+        <MudButton Variant="Variant.Outlined"
+                   StartIcon="@Icons.Material.Filled.CloudDownload"
+                   OnClick="OpenDownloads">
+            Downloads
+        </MudButton>
+    </MudBadge>
+</MudStack>
+
+@* ---- Collapsible filters ---- *@
+<MudCollapse Expanded="_filtersOpen">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="px-4 pt-2 pb-2" Wrap="Wrap.Wrap">
+        <MudSelect T="CivitaiSort" Label="Sort" @bind-Value="_sort"
+                   Dense="true" Margin="Margin.Dense" Style="width: 180px;">
+            @foreach (var s in Enum.GetValues<CivitaiSort>())
+            {
+                <MudSelectItem T="CivitaiSort" Value="s">@SortLabel(s)</MudSelectItem>
+            }
+        </MudSelect>
+
+        <MudSelect T="CivitaiPeriod" Label="Period" @bind-Value="_period"
+                   Dense="true" Margin="Margin.Dense" Style="width: 140px;">
+            @foreach (var p in Enum.GetValues<CivitaiPeriod>())
+            {
+                <MudSelectItem T="CivitaiPeriod" Value="p">@p.ToString()</MudSelectItem>
+            }
+        </MudSelect>
+
+        <MudSelect T="string" Label="Type" MultiSelection="true"
+                   @bind-SelectedValues="_selectedTypes"
+                   Dense="true" Margin="Margin.Dense" Style="width: 220px;"
+                   MultiSelectionTextFunc="@(v => v.Count == 0 ? "All types" : string.Join(", ", v))">
+            @foreach (var t in CivitaiModelTypes.All)
+            {
+                <MudSelectItem T="string" Value="t">@t</MudSelectItem>
+            }
+        </MudSelect>
+
+        <MudSelect T="string" Label="Base model" MultiSelection="true"
+                   @bind-SelectedValues="_selectedBaseModels"
+                   Dense="true" Margin="Margin.Dense" Style="width: 240px;"
+                   MultiSelectionTextFunc="@(v => v.Count == 0 ? "All base models" : string.Join(", ", v))">
+            @foreach (var b in CivitaiBaseModels.Common)
+            {
+                <MudSelectItem T="string" Value="b">@b</MudSelectItem>
+            }
+        </MudSelect>
+
+        <MudSwitch T="bool" @bind-Value="_showNsfw" Color="Color.Error" Label="NSFW" />
+
+        @* Card size (layout only — applies live, no search) *@
+        <MudText Typo="Typo.caption" Class="ml-2">Card size</MudText>
+        <MudSlider T="int" Min="80" Max="600" Step="10" Value="_cardWidth" ValueChanged="OnCardWidthChanged" Immediate="true" Style="width: 200px;" />
+        <MudText Typo="Typo.caption">@_cardWidth px</MudText>
+        <MudIconButton Icon="@Icons.Material.Filled.RestartAlt" Size="Size.Small" title="Reset card size" OnClick="ResetCardSize" />
+    </MudStack>
+</MudCollapse>
+
+@* ---- Results grid ---- *@
+@if (!_searched)
+{
+    <MudAlert Severity="Severity.Info" Class="ma-4">
+        Set your filters and press <b>Search</b> to browse Civitai.
+    </MudAlert>
+}
+else if (_loading && _items.Count == 0)
+{
+    <div class="pa-8 d-flex justify-center">
+        <MudProgressCircular Indeterminate="true" />
+    </div>
+}
+else if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="ma-4">@_error</MudAlert>
+}
+else
+{
+    @if (_items.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Class="ma-4">
+            @(_nextCursor is not null
+                ? "Every model on this page is hidden by your current rating filters. Press Next to keep looking, or adjust the filters above."
+                : _pageIndex > 0
+                    ? "No more results — you've reached the end of this search. Use Previous to go back."
+                    : "No models found. Try different filters.")
+        </MudAlert>
+    }
+    else
+    {
+    <div class="civitai-grid pa-4" style="@($"--cardw: {_cardWidth}px;")">
+        @foreach (var m in _items)
+        {
+            var img = m.CardImage;
+            <div class="civitai-cell" @key="m.Id">
+                <MudPaper Class="civitai-card cursor-pointer overflow-hidden" @onclick="@(() => OpenDialog(m))">
+                    @{
+                        var statuses = Downloads.VersionStatuses(m);
+                        var ntotal = statuses.Count;
+                        var ndl = statuses.Count(s => s.Downloaded);
+                        var anyDownloading = Downloads.IsAnyDownloading(m);
+                    }
+
+                    @* Status (always visible): downloading spinner, or blue/green checkmark *@
+                    @if (anyDownloading || ndl > 0)
+                    {
+                        <div class="civitai-card-status" @onclick:stopPropagation="true">
+                            <MudTooltip Placement="Placement.Top">
+                                <TooltipContent>
+                                    <div class="civitai-dl-tip">
+                                        <div class="civitai-dl-tip-head">@ndl / @ntotal versions downloaded</div>
+                                        @foreach (var s in statuses)
+                                        {
+                                            <div>@(s.Downloaded ? "✓" : "✗") @s.Name</div>
+                                        }
+                                    </div>
+                                </TooltipContent>
+                                <ChildContent>
+                                    @if (anyDownloading)
+                                    {
+                                        <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />
+                                    }
+                                    else
+                                    {
+                                        <MudIconButton Icon="@Icons.Material.Filled.CheckCircle"
+                                                       Size="Size.Medium"
+                                                       Color="@(ndl >= ntotal ? Color.Success : Color.Info)"
+                                                       Class="civitai-action-btn" OnClick="@(() => QuickDownload(m))" />
+                                    }
+                                </ChildContent>
+                            </MudTooltip>
+                        </div>
+                    }
+
+                    @* Download button (hover only) — shown when nothing is downloaded yet *@
+                    @if (!anyDownloading && ndl == 0)
+                    {
+                        <div class="civitai-card-actions" @onclick:stopPropagation="true">
+                            <MudIconButton Icon="@Icons.Material.Filled.Download"
+                                           Size="Size.Medium" Color="Color.Inherit"
+                                           Class="civitai-action-btn" title="Download…"
+                                           OnClick="@(() => QuickDownload(m))" />
+                        </div>
+                    }
+
+                    @{ var blurClass = Blur(m, img) ? " nsfw-blur" : ""; }
+                    @if (img is not null && img.RenderAsVideo)
+                    {
+                        <video src="@ThumbUrl(img)" muted loop autoplay="@Prefs.AutoplayVideos" playsinline preload="metadata" class="civitai-img civ-novol@(blurClass)"></video>
+                    }
+                    else
+                    {
+                        <img src="@ThumbUrl(img)" loading="lazy" class="civitai-img@(blurClass)" />
+                    }
+
+                    <div class="civitai-type-chip">
+                        @m.Type
+                        @if (m.ModelVersions.Count > 1)
+                        {
+                            <span class="civitai-ver-count" title="@($"{m.ModelVersions.Count} versions")">@m.ModelVersions.Count</span>
+                        }
+                    </div>
+                    @{
+                        var baseModels = BaseModelsOf(m);
+                    }
+                    @if (baseModels.Count == 1)
+                    {
+                        <div class="civitai-base-chip">@baseModels[0]</div>
+                    }
+                    else if (baseModels.Count > 1)
+                    {
+                        <div class="civitai-base-chip" title="@string.Join("\n", baseModels)">@baseModels.Count base models</div>
+                    }
+
+                    <div class="civitai-footer">
+                        <MudText Typo="Typo.caption" Class="@($"civitai-title{(BlurName(m) ? " nsfw-name-blur" : "")}")">@m.Name</MudText>
+                        <div class="civitai-stats">
+                            @if (m.Stats is { } s)
+                            {
+                                <span><MudIcon Icon="@Icons.Material.Filled.Download" Size="Size.Small" /> @Compact(s.DownloadCount)</span>
+                                <span><MudIcon Icon="@Icons.Material.Filled.ThumbUp" Size="Size.Small" /> @Compact(s.ThumbsUpCount)</span>
+                            }
+                        </div>
+                    </div>
+                </MudPaper>
+            </div>
+        }
+    </div>
+    }
+
+    @* ---- Paging footer (Prev / Next) — shown whenever there are items, we've paged past page 1,
+         or more pages exist (so an empty page — end-of-results OR all-filtered — never strands you) ---- *@
+    @if (!_isModelIdSearch && (_items.Count > 0 || _pageIndex > 0 || _nextCursor is not null))
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.Center" Spacing="3" Class="pa-4" Wrap="Wrap.Wrap">
+            <MudButton Variant="Variant.Outlined"
+                       OnClick="PrevPage"
+                       Disabled="@(_loading || _pageIndex == 0)"
+                       StartIcon="@Icons.Material.Filled.NavigateBefore">
+                Previous
+            </MudButton>
+
+            <MudText Typo="Typo.body2">@PageStatusText()</MudText>
+
+            <MudButton Variant="Variant.Outlined"
+                       OnClick="NextPage"
+                       Disabled="@(_loading || _nextCursor is null)"
+                       EndIcon="@Icons.Material.Filled.NavigateNext">
+                Next
+            </MudButton>
+
+            @if (_pageCursors.Count > 1)
+            {
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                    <MudText Typo="Typo.caption">Jump to</MudText>
+                    <MudNumericField T="int" @bind-Value="_jumpTarget" Min="1" Max="@_pageCursors.Count"
+                                     Variant="Variant.Outlined" Margin="Margin.Dense" Style="width: 80px;" />
+                    <MudText Typo="Typo.caption">/ @_pageCursors.Count</MudText>
+                    <MudButton Variant="Variant.Text" OnClick="JumpToPage" Disabled="_loading">Go</MudButton>
+                </MudStack>
+            }
+        </MudStack>
+    }
+}
+
+</div>
+
+<style>
+    .civitai-search { width: min(420px, 100%); }
+
+    .civitai-grid {
+        --cardw: 200px;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(var(--cardw), 1fr));
+        gap: 16px;
+    }
+
+    .civitai-card {
+        position: relative;
+        aspect-ratio: 3 / 4;
+        border-radius: 12px;
+        user-select: none;
+        container-type: inline-size; /* lets the footer/chips compact based on actual card width */
+    }
+
+    .civitai-img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+        pointer-events: none;
+    }
+
+    .civitai-type-chip {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        background: rgba(0,0,0,0.65);
+        color: #fff;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 6px;
+    }
+
+    .civitai-ver-count {
+        display: inline-block;
+        margin-left: 4px;
+        background: rgba(255,255,255,0.22);
+        border-radius: 999px;
+        padding: 0 6px;
+        font-size: 10px;
+    }
+
+    .civitai-base-chip {
+        position: absolute;
+        top: 32px;
+        left: 8px;
+        background: rgba(33,118,174,0.85);
+        color: #fff;
+        font-size: 10px;
+        font-weight: 600;
+        padding: 1px 8px;
+        border-radius: 6px;
+    }
+
+    .civitai-footer {
+        position: absolute;
+        left: 0; right: 0; bottom: 0;
+        padding: 10px 12px;
+        background: linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0.4), rgba(0,0,0,0));
+        color: #fff;
+    }
+
+    .civitai-title {
+        font-weight: 700;
+        line-height: 1.2;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    .civitai-stats {
+        display: flex;
+        gap: 12px;
+        font-size: 11px;
+        opacity: 0.9;
+        margin-top: 4px;
+        align-items: center;
+    }
+    .civitai-stats span { display: inline-flex; align-items: center; gap: 3px; }
+
+    .civitai-card-status {
+        position: absolute;
+        top: 8px; right: 8px;
+        z-index: 3;
+    }
+
+    .civitai-card-actions {
+        position: absolute;
+        top: 8px; right: 8px;
+        z-index: 3;
+        opacity: 0;
+        transition: opacity 160ms ease;
+    }
+    .civitai-card:hover .civitai-card-actions { opacity: 1; }
+    .civitai-card:has(.civitai-badge) .civitai-card-actions,
+    .civitai-card:has(.mud-progress-circular) .civitai-card-actions { opacity: 1; }
+
+    .civitai-action-btn {
+        background: rgba(0,0,0,0.55);
+        border: 1px solid rgba(255,255,255,0.15);
+        backdrop-filter: blur(6px);
+    }
+    .civitai-action-btn:hover { background: rgba(0,0,0,0.8); }
+
+    .nsfw-blur { filter: blur(28px); transition: filter 0.15s ease; }
+    html.nsfw-hover .civitai-card:hover .nsfw-blur { filter: none; }
+
+    .nsfw-name-blur { filter: blur(6px); transition: filter 0.15s ease; }
+    html.nsfw-hover .civitai-card:hover .nsfw-name-blur { filter: none; }
+
+    .civitai-dl-tip { text-align: left; min-width: 160px; font-size: 12px; }
+    .civitai-dl-tip-head { font-weight: 700; margin-bottom: 4px; }
+
+    /* As cards shrink (small card-size / multi-column phone layout), condense the overlay info so
+       it doesn't swallow the thumbnail. Driven by each card's own width (container query). */
+    @@container (max-width: 175px) {
+        .civitai-footer { padding: 5px 7px; }
+        .civitai-title { -webkit-line-clamp: 1; font-size: 11px; }
+        .civitai-stats { gap: 8px; font-size: 10px; margin-top: 2px; }
+        .civitai-stats .mud-icon-root { font-size: 13px; }
+        .civitai-type-chip { font-size: 9px; padding: 1px 5px; top: 5px; left: 5px; }
+        .civitai-base-chip { display: none; }
+    }
+
+    @@container (max-width: 125px) {
+        .civitai-stats { display: none; }
+        .civitai-type-chip { display: none; }
+        .civitai-title { font-size: 10px; }
+        .civitai-footer { padding: 4px 5px; }
+    }
+
+    /* Keep the grid + paging footer clear of the mobile bottom navigation bar. */
+    @@media screen and (max-width: 600px) {
+        .civitai-root { padding-bottom: 90px; }
+        .civitai-search { width: 100%; }
+    }
+</style>

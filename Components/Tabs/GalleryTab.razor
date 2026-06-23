@@ -1,0 +1,543 @@
+@using SimpleDiffusion.Infrastructure
+@inject HttpClient Http
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+@inject SimpleDiffusion.Components.Services.UiPreferences Prefs
+@inject SimpleDiffusion.Components.Services.CrossTab CrossTab
+
+<div class="pa-4" style="--gallery-cardw: @(_cardWidth)px;">
+    <div class="d-flex align-center gap-2 mb-4 flex-wrap">
+        @if (_album != null)
+        {
+            <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="GoRoot" title="Back to gallery" />
+            <MudIcon Icon="@Icons.Material.Filled.Folder" />
+            <MudText Typo="Typo.h6">@_album</MudText>
+        }
+        else
+        {
+            <MudIcon Icon="@Icons.Material.Filled.Collections" />
+            <MudText Typo="Typo.h6">Gallery</MudText>
+        }
+
+        <MudTextField T="string" Value="_searchTerm" ValueChanged="OnSearchChanged" Immediate="true"
+                      Placeholder="Search prompts, seeds, names…" Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search" Clearable="true"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Class="mx-2" Style="max-width: 280px;" />
+
+        <MudSpacer />
+        @if (_selectMode)
+        {
+            <MudText Typo="Typo.body2" Class="mr-1">@_selected.Count selected</MudText>
+            <MudButton Size="Size.Small" OnClick="SelectAllInView">All</MudButton>
+            <MudButton Size="Size.Small" OnClick="@(() => { _selected.Clear(); })">None</MudButton>
+            <MudTooltip Text="Download selected (zip)">
+                <MudIconButton Icon="@Icons.Material.Filled.Download" Size="Size.Small" Disabled="@(_selected.Count == 0)" OnClick="BatchDownload" />
+            </MudTooltip>
+            <MudTooltip Text="Move selected">
+                <MudIconButton Icon="@Icons.Material.Filled.DriveFileMove" Size="Size.Small" Disabled="@(_selected.Count == 0)" OnClick="BatchMove" />
+            </MudTooltip>
+            <MudTooltip Text="Delete selected">
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" Disabled="@(_selected.Count == 0)" OnClick="BatchDelete" />
+            </MudTooltip>
+            <MudButton Variant="Variant.Filled" Size="Size.Small" OnClick="ExitSelectMode">Done</MudButton>
+        }
+        else
+        {
+            <MudTooltip Text="Card size">
+                <MudIcon Icon="@Icons.Material.Filled.PhotoSizeSelectLarge" Size="Size.Small" />
+            </MudTooltip>
+            <MudSlider T="int" Min="110" Max="340" Step="10" Value="_cardWidth" ValueChanged="OnCardWidthChanged" Style="width: 110px;" Class="mx-1" />
+
+            @if (HasSelectableImages)
+            {
+                <MudButton StartIcon="@Icons.Material.Filled.Checklist" Variant="Variant.Outlined" Size="Size.Small" OnClick="@(() => _selectMode = true)">Select</MudButton>
+            }
+            <MudButton StartIcon="@Icons.Material.Filled.CreateNewFolder" Variant="Variant.Outlined" Size="Size.Small" OnClick="NewAlbum">New album</MudButton>
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small" OnClick="Reload" title="Refresh" />
+        }
+    </div>
+
+    @if (IsSearching)
+    {
+        @* ---- Search results (across all albums + unsorted) ---- *@
+        @if (_searching)
+        {
+            <div class="pa-8 d-flex justify-center"><MudProgressCircular Indeterminate="true" /></div>
+        }
+        else if (_searchResults.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info">No images match “@_searchTerm”.</MudAlert>
+        }
+        else
+        {
+            <MudText Typo="Typo.subtitle2" Class="mb-2">@_searchResults.Count result@(_searchResults.Count == 1 ? "" : "s") for “@_searchTerm”</MudText>
+            @ImageGrid(_searchResults)
+        }
+    }
+    else if (_loading)
+    {
+        <div class="pa-8 d-flex justify-center"><MudProgressCircular Indeterminate="true" /></div>
+    }
+    else if (_album == null)
+    {
+        @* ---- Root view: albums (like folders) on top, unsorted images below ---- *@
+        @if (_overview.Albums.Count > 0)
+        {
+            <div class="gallery-grid mb-4">
+                @foreach (var alb in _overview.Albums)
+                {
+                    var a = alb;
+                    <MudPaper Class="gallery-folder cursor-pointer" Elevation="2" @onclick="@(() => OpenAlbum(a.Name))">
+                        <div class="d-flex align-center justify-space-between">
+                            <MudIcon Icon="@Icons.Material.Filled.Folder" Color="Color.Warning" Size="Size.Large" />
+                            <MudMenu Icon="@Icons.Material.Filled.MoreVert" Size="Size.Small" Dense="true" @onclick:stopPropagation="true">
+                                <MudMenuItem OnClick="@(() => RenameAlbum(a.Name))">Rename</MudMenuItem>
+                                <MudMenuItem OnClick="@(() => DeleteAlbum(a.Name))">Delete…</MudMenuItem>
+                            </MudMenu>
+                        </div>
+                        <MudText Typo="Typo.body2" Class="gallery-folder-name">@a.Name</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@a.Count image@(a.Count == 1 ? "" : "s")</MudText>
+                    </MudPaper>
+                }
+            </div>
+        }
+
+        @if (_overview.Unsorted.Count > 0)
+        {
+            <MudText Typo="Typo.subtitle2" Class="mb-2">Unsorted</MudText>
+            @ImageGrid(_overview.Unsorted)
+        }
+        else if (_overview.Albums.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info">No images yet. Use "Save to Gallery" on a generated image.</MudAlert>
+        }
+    }
+    else
+    {
+        @* ---- Album view ---- *@
+        @if (_albumItems.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info">This album is empty.</MudAlert>
+        }
+        else
+        {
+            @ImageGrid(_albumItems)
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public bool Active { get; set; }   // true while the Gallery tab is the visible one
+
+    private bool _loading = true;
+    private bool _wasActive;
+    private string? _album;                       // null = root view
+    private GalleryOverviewDto _overview = new();
+    private List<GalleryItemDto> _albumItems = new();
+
+    // Search across the whole gallery (filename + embedded prompt/seed). When active it replaces the view.
+    private string _searchTerm = "";
+    private List<GalleryItemDto> _searchResults = new();
+    private bool _searching;
+    private CancellationTokenSource? _searchCts;
+    private bool IsSearching => !string.IsNullOrWhiteSpace(_searchTerm);
+
+    // Long-edge size for grid thumbnails — request a tier (not the full PNG) sized to the card.
+    private int ThumbWidth => Math.Clamp(_cardWidth * 2, 256, 768);
+
+    private async Task OnSearchChanged(string? v)
+    {
+        _searchTerm = v ?? "";
+        _selected.Clear();
+        _searchCts?.Cancel();
+        if (!IsSearching) { _searchResults = new(); _searching = false; StateHasChanged(); return; }
+
+        _searchCts = new CancellationTokenSource();
+        var tok = _searchCts.Token;
+        try
+        {
+            await Task.Delay(300, tok); // debounce keystrokes
+            _searching = true; StateHasChanged();
+            var res = await Http.GetFromJsonAsync<List<GalleryItemDto>>($"/gallery/search?q={Uri.EscapeDataString(_searchTerm)}", tok) ?? new();
+            if (!tok.IsCancellationRequested) _searchResults = res;
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { Snackbar.Add("Search failed: " + ex.Message, Severity.Error); }
+        finally { if (!tok.IsCancellationRequested) { _searching = false; StateHasChanged(); } }
+    }
+
+    // Re-run whichever view is showing after a mutation (search results vs. the album/root listing).
+    private async Task RefreshCurrent()
+    {
+        if (IsSearching) await OnSearchChanged(_searchTerm);
+        else await Reload();
+    }
+
+    // Multi-select / batch operations (selection applies to the current view's images).
+    private bool _selectMode;
+    private readonly HashSet<string> _selected = new(StringComparer.OrdinalIgnoreCase);
+    private bool HasSelectableImages => CurrentItems.Count > 0;
+
+    private void ExitSelectMode() { _selectMode = false; _selected.Clear(); }
+    private void SelectAllInView() { foreach (var it in CurrentItems) _selected.Add(it.File); }
+
+    private void OnImageClick(List<GalleryItemDto> items, int idx, GalleryItemDto it)
+    {
+        if (_selectMode)
+        {
+            if (!_selected.Remove(it.File)) _selected.Add(it.File);
+        }
+        else
+        {
+            OpenLightbox(items, idx);
+        }
+    }
+
+    // Card size (persisted per device).
+    private int _cardWidth = SimpleDiffusion.Components.Services.UiPreferences.DefaultGalleryCardWidth;
+    private CancellationTokenSource? _sizeSaveCts;
+
+    // The tab is kept alive, so reload whenever it becomes visible (e.g. after saving new images).
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Active && !_wasActive) await Reload();
+        _wasActive = Active;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await Prefs.EnsureLoadedAsync();
+            if (_cardWidth != Prefs.GalleryCardWidth) { _cardWidth = Prefs.GalleryCardWidth; StateHasChanged(); }
+        }
+    }
+
+    private void OnCardWidthChanged(int v)
+    {
+        _cardWidth = v;
+        Prefs.GalleryCardWidth = v;
+        // Debounce the localStorage write so dragging the slider isn't chatty.
+        _sizeSaveCts?.Cancel();
+        _sizeSaveCts = new CancellationTokenSource();
+        var tok = _sizeSaveCts.Token;
+        _ = Task.Run(async () => { try { await Task.Delay(500, tok); await Prefs.PersistAsync(); } catch { } });
+    }
+
+    private async Task Reload()
+    {
+        _loading = true;
+        StateHasChanged();
+        try
+        {
+            if (_album == null)
+                _overview = await Http.GetFromJsonAsync<GalleryOverviewDto>("/gallery/overview") ?? new();
+            else
+                _albumItems = await Http.GetFromJsonAsync<List<GalleryItemDto>>($"/gallery/album?name={Uri.EscapeDataString(_album)}") ?? new();
+        }
+        catch (Exception ex) { Snackbar.Add("Gallery load failed: " + ex.Message, Severity.Error); }
+        finally { _loading = false; StateHasChanged(); }
+    }
+
+    private async Task OpenAlbum(string name) { ExitSelectMode(); _album = name; await Reload(); }
+    private async Task GoRoot() { ExitSelectMode(); _album = null; await Reload(); }
+
+    private List<GalleryItemDto> CurrentItems => IsSearching ? _searchResults : (_album == null ? _overview.Unsorted : _albumItems);
+
+    // ---- Image grid (shared between root-unsorted and album views) ----
+    private RenderFragment ImageGrid(List<GalleryItemDto> items) =>@<div class="gallery-grid">
+        @foreach (var (item, index) in items.Select((v, i) => (v, i)))
+        {
+            var it = item;
+            var idx = index;
+            <div class="gallery-cell">
+                <MudPaper Class="@($"gallery-img-card cursor-pointer{(_selectMode && _selected.Contains(it.File) ? " gallery-selected" : "")}")" Elevation="2"
+                          @onclick="@(() => OnImageClick(items, idx, it))">
+                    <img src="@($"{it.Url}&w={ThumbWidth}")" loading="lazy" class="gallery-img" />
+                    @if (_selectMode)
+                    {
+                        <div class="gallery-select-check">
+                            <MudIcon Icon="@(_selected.Contains(it.File) ? Icons.Material.Filled.CheckCircle : Icons.Material.Outlined.RadioButtonUnchecked)"
+                                     Color="@(_selected.Contains(it.File) ? Color.Primary : Color.Surface)" />
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="gallery-img-actions" @onclick:stopPropagation="true">
+                            <MudMenu Icon="@Icons.Material.Filled.MoreVert" Size="Size.Small" Color="Color.Inherit" Dense="true"
+                                     AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                                <MudMenuItem Icon="@Icons.Material.Filled.Image" OnClick="@(() => SendTo(it, false))">Send to Img2Img</MudMenuItem>
+                                <MudMenuItem Icon="@Icons.Material.Filled.PhotoSizeSelectLarge" OnClick="@(() => SendTo(it, true))">Send to Upscale</MudMenuItem>
+                                <MudMenuItem Icon="@Icons.Material.Filled.Download" OnClick="@(() => Download(it))">Download</MudMenuItem>
+                                <MudMenuItem Icon="@Icons.Material.Filled.DriveFileMove" OnClick="@(() => MoveImage(it))">Move to album</MudMenuItem>
+                                <MudMenuItem Icon="@Icons.Material.Filled.Delete" IconColor="Color.Error" OnClick="@(() => DeleteImage(it))">Delete</MudMenuItem>
+                            </MudMenu>
+                        </div>
+                    }
+                </MudPaper>
+            </div>
+        }
+    </div>;
+
+    private void OpenLightbox(List<GalleryItemDto> items, int index)
+        => ImageLightbox.ShowAsync(DialogService, items.Select(i => i.Url).ToList(), index, closeOnBackdropClick: true);
+
+    private async Task Download(GalleryItemDto it)
+    {
+        try { await JS.InvokeVoidAsync("downloadUrl", it.Url, it.File); } catch { }
+    }
+
+    private async Task SendTo(GalleryItemDto it, bool toUpscale)
+    {
+        try
+        {
+            var bytes = await Http.GetByteArrayAsync(it.Url);
+            var b64 = Convert.ToBase64String(bytes);
+            if (toUpscale) CrossTab.RequestSendToUpscale(b64);
+            else CrossTab.RequestSendToImg2Img(b64);
+        }
+        catch (Exception ex) { Snackbar.Add("Couldn't send image: " + ex.Message, Severity.Error); }
+    }
+
+    // ---- Batch operations on the selected images ----
+    private List<GalleryItemDto> SelectedItems() => CurrentItems.Where(i => _selected.Contains(i.File)).ToList();
+
+    private async Task BatchDownload()
+    {
+        var items = SelectedItems();
+        if (items.Count == 0) return;
+
+        // One zip (server-side) so Chrome doesn't block / prompt for many downloads.
+        var files = new List<(string, string)>();
+        foreach (var it in items)
+        {
+            try
+            {
+                var bytes = await Http.GetByteArrayAsync(it.Url);
+                files.Add((it.File, Convert.ToBase64String(bytes)));
+            }
+            catch { }
+        }
+        if (files.Count == 0) { Snackbar.Add("Couldn't read the selected images.", Severity.Error); return; }
+
+        var zipName = $"gallery_{(_album ?? "unsorted")}_{DateTime.Now:yyyyMMdd_HHmmss}.zip";
+        await JS.InvokeVoidAsync("downloadUrl", GalleryServer.BuildZipDownload(files), zipName);
+    }
+
+    private async Task BatchMove()
+    {
+        var items = SelectedItems();
+        if (items.Count == 0) return;
+
+        List<string> albums;
+        try { albums = await Http.GetFromJsonAsync<List<string>>("/gallery/albums") ?? new(); }
+        catch { albums = new(); }
+        albums = albums.Where(a => !string.Equals(a, _album, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        var parameters = new DialogParameters<GalleryAlbumPickerDialog> { { x => x.Albums, albums }, { x => x.AllowUnsorted, _album != null } };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.ExtraSmall, FullWidth = true };
+        var dlg = await DialogService.ShowAsync<GalleryAlbumPickerDialog>($"Move {items.Count} to album", parameters, options);
+        var res = await dlg.Result;
+        if (res is null || res.Canceled) return;
+        var target = res.Data as string;
+
+        foreach (var it in items)
+        {
+            try { await Http.PostAsJsonAsync("/gallery/move", new { fromAlbum = it.Album, file = it.File, toAlbum = target }); } catch { }
+        }
+        ExitSelectMode();
+        await RefreshCurrent();
+    }
+
+    private async Task BatchDelete()
+    {
+        var items = SelectedItems();
+        if (items.Count == 0) return;
+
+        var ok = await DialogService.ShowMessageBox(
+            "Delete images?",
+            $"Permanently delete {items.Count} image{(items.Count == 1 ? "" : "s")} from disk?",
+            yesText: "Delete", cancelText: "Cancel");
+        if (ok != true) return;
+
+        foreach (var it in items)
+        {
+            var url = $"/gallery/image/delete?file={Uri.EscapeDataString(it.File)}" + (it.Album == null ? "" : $"&album={Uri.EscapeDataString(it.Album)}");
+            try { await Http.PostAsync(url, null); } catch { }
+        }
+        ExitSelectMode();
+        await RefreshCurrent();
+    }
+
+
+    // ---- Album management ----
+    private async Task NewAlbum()
+    {
+        var name = await PromptName("New album", "");
+        if (name == null) return;
+        var resp = await Http.PostAsync($"/gallery/album/create?name={Uri.EscapeDataString(name)}", null);
+        if (!resp.IsSuccessStatusCode) { Snackbar.Add("Couldn't create album (it may already exist).", Severity.Warning); return; }
+        await Reload();
+    }
+
+    private async Task RenameAlbum(string oldName)
+    {
+        var name = await PromptName("Rename album", oldName);
+        if (name == null || name == oldName) return;
+        var resp = await Http.PostAsync($"/gallery/album/rename?oldName={Uri.EscapeDataString(oldName)}&newName={Uri.EscapeDataString(name)}", null);
+        if (!resp.IsSuccessStatusCode) { Snackbar.Add("Rename failed (target may exist).", Severity.Warning); return; }
+        await Reload();
+    }
+
+    private async Task DeleteAlbum(string name)
+    {
+        // Re-check the album contents first — files may have changed externally since we loaded.
+        int count;
+        try
+        {
+            var imgs = await Http.GetFromJsonAsync<List<GalleryItemDto>>($"/gallery/album?name={Uri.EscapeDataString(name)}");
+            count = imgs?.Count ?? 0;
+        }
+        catch { count = 1; } // on error, fall through to the prompt to be safe
+
+        // Empty album: just delete it, no prompt.
+        if (count == 0)
+        {
+            var empty = await Http.PostAsync($"/gallery/album/delete?name={Uri.EscapeDataString(name)}&deleteFiles=false", null);
+            if (!empty.IsSuccessStatusCode) { Snackbar.Add("Delete failed.", Severity.Error); return; }
+            Snackbar.Add("Empty album deleted.", Severity.Success);
+            await Reload();
+            return;
+        }
+
+        // yes = delete files too, no = keep files (move to unsorted), cancel = abort.
+        var choice = await DialogService.ShowMessageBox(
+            $"Delete album \"{name}\"?",
+            (MarkupString)"Do you want to delete the images inside it as well?<br/>Choosing <b>Keep images</b> moves them to Unsorted.",
+            yesText: "Delete images too", noText: "Keep images", cancelText: "Cancel");
+        if (choice == null) return; // cancel
+        bool deleteFiles = choice == true;
+
+        var resp = await Http.PostAsync($"/gallery/album/delete?name={Uri.EscapeDataString(name)}&deleteFiles={deleteFiles}", null);
+        if (!resp.IsSuccessStatusCode) { Snackbar.Add("Delete failed.", Severity.Error); return; }
+        Snackbar.Add(deleteFiles ? "Album and images deleted." : "Album deleted; images moved to Unsorted.", Severity.Success);
+        await Reload();
+    }
+
+    // ---- Image actions ----
+    private async Task MoveImage(GalleryItemDto it)
+    {
+        List<string> albums;
+        try { albums = await Http.GetFromJsonAsync<List<string>>("/gallery/albums") ?? new(); }
+        catch { albums = new(); }
+        // Don't offer the album the image is already in.
+        albums = albums.Where(a => !string.Equals(a, it.Album, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        var parameters = new DialogParameters<GalleryAlbumPickerDialog> { { x => x.Albums, albums }, { x => x.AllowUnsorted, it.Album != null } };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.ExtraSmall, FullWidth = true };
+        var dlg = await DialogService.ShowAsync<GalleryAlbumPickerDialog>("Move to album", parameters, options);
+        var res = await dlg.Result;
+        if (res is null || res.Canceled) return;
+        var target = res.Data as string; // null = Unsorted
+
+        var resp = await Http.PostAsJsonAsync("/gallery/move", new { fromAlbum = it.Album, file = it.File, toAlbum = target });
+        if (!resp.IsSuccessStatusCode) { Snackbar.Add("Move failed.", Severity.Error); return; }
+        await RefreshCurrent();
+    }
+
+    private async Task DeleteImage(GalleryItemDto it)
+    {
+        var ok = await DialogService.ShowMessageBox("Delete image?", "This permanently deletes the file from disk.", yesText: "Delete", cancelText: "Cancel");
+        if (ok != true) return;
+        var url = $"/gallery/image/delete?file={Uri.EscapeDataString(it.File)}" + (it.Album == null ? "" : $"&album={Uri.EscapeDataString(it.Album)}");
+        var resp = await Http.PostAsync(url, null);
+        if (!resp.IsSuccessStatusCode) { Snackbar.Add("Delete failed.", Severity.Error); return; }
+        await RefreshCurrent();
+    }
+
+    private async Task<string?> PromptName(string title, string initial)
+    {
+        var parameters = new DialogParameters<GalleryNameDialog> { { x => x.Value, initial } };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.ExtraSmall, FullWidth = true };
+        var dlg = await DialogService.ShowAsync<GalleryNameDialog>(title, parameters, options);
+        var res = await dlg.Result;
+        return (res is null || res.Canceled) ? null : res.Data as string;
+    }
+}
+
+<style>
+    .gallery-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(var(--gallery-cardw, 180px), 1fr));
+        gap: 14px;
+    }
+
+    .gallery-folder {
+        padding: 12px;
+        border-radius: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-height: 96px;
+    }
+
+    .gallery-folder-name {
+        font-weight: 600;
+        overflow-wrap: anywhere;
+    }
+
+    .gallery-img-card {
+        position: relative;
+        aspect-ratio: 1 / 1;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    .gallery-img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    .gallery-img-actions {
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        display: flex;
+        gap: 2px;
+        background: rgba(0,0,0,0.45);
+        border-radius: 8px;
+        opacity: 0;
+        transition: opacity 0.15s ease;
+        color: #fff;
+    }
+
+    .gallery-img-card:hover .gallery-img-actions {
+        opacity: 1;
+    }
+
+    .gallery-selected {
+        outline: 3px solid var(--mud-palette-primary);
+        outline-offset: -3px;
+    }
+
+    .gallery-select-check {
+        position: absolute;
+        top: 6px;
+        left: 6px;
+        z-index: 4;
+        background: rgba(0,0,0,0.45);
+        border-radius: 50%;
+        line-height: 0;
+        padding: 2px;
+        pointer-events: none;
+    }
+
+    /* Touch devices have no hover — keep the actions visible so they're reachable without a
+       long-press (which would otherwise pop the browser's context menu). */
+    @@media (pointer: coarse) {
+        .gallery-img-actions { opacity: 1; }
+    }
+</style>

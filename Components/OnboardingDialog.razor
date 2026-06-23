@@ -1,0 +1,314 @@
+@namespace SimpleDiffusion.Components
+@using System.Text.Json
+@using SimpleDiffusion.Components.Civitai
+@inject IConfiguration Configuration
+@inject UiPreferences UiPrefs
+@inject WorkspaceState Workspace
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<MudDialog>
+    <TitleContent>
+        <div class="d-flex align-center">
+            <MudIcon Icon="@Icons.Material.Filled.RocketLaunch" Class="mr-2" />
+            <MudText Typo="Typo.h6">Welcome to Simple Diffusion</MudText>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        @* Step indicator *@
+        <div class="d-flex align-center justify-center flex-wrap gap-2 mb-4">
+            @for (int i = 0; i < _steps.Count; i++)
+            {
+                var idx = i;
+                <MudChip T="string" Size="Size.Small"
+                         Color="@(idx == _step ? Color.Primary : (idx < _step ? Color.Success : Color.Default))"
+                         Variant="@(idx == _step ? Variant.Filled : Variant.Outlined)"
+                         OnClick="@(() => _step = idx)">
+                    @(idx + 1). @StepTitle(_steps[idx])
+                </MudChip>
+            }
+        </div>
+
+        <div style="min-height: 320px;">
+            @switch (_steps[_step])
+            {
+                case "welcome":
+                    <MudText Typo="Typo.body1" Class="mb-2">Let's get you set up. This takes a minute and you can change everything later in <b>Settings</b>.</MudText>
+                    <MudList T="string" Dense="true">
+                        @if (IncludeServerSetup)
+                        {
+                            <MudListItem T="string" Icon="@Icons.Material.Filled.Dns" Text="Connect to your Stable Diffusion server" />
+                        }
+                        <MudListItem T="string" Icon="@Icons.Material.Filled.Key" Text="Add a Civitai API key (optional)" />
+                        <MudListItem T="string" Icon="@Icons.Material.Filled.Visibility" Text="Choose what content you want to see" />
+                    </MudList>
+                    @if (!IncludeServerSetup)
+                    {
+                        <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mt-3">
+                            Server and model-folder setup is done on the computer hosting Simple Diffusion. On this device you only set your own preferences.
+                        </MudAlert>
+                    }
+                    break;
+
+                case "server":
+                    <MudText Typo="Typo.subtitle1" Class="mb-2">Stable Diffusion server</MudText>
+                    <MudTextField @bind-Value="_serverAddress" Label="Server address" Required="true" RequiredError="Required"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  HelperText="The URL of your running SD WebUI / reForge API (e.g. http://127.0.0.1:7860/)." Class="mb-2" />
+
+                    <div class="d-flex align-center gap-2 mb-3">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.NetworkCheck"
+                                   OnClick="TestConnection" Disabled="@(_testStatus == "testing")">Test connection</MudButton>
+                        @switch (_testStatus)
+                        {
+                            case "testing": <MudProgressCircular Size="Size.Small" Indeterminate="true" />; break;
+                            case "ok": <MudChip T="string" Size="Size.Small" Color="Color.Success" Icon="@Icons.Material.Filled.CheckCircle">Connected</MudChip>; break;
+                            case "fail": <MudChip T="string" Size="Size.Small" Color="Color.Error" Icon="@Icons.Material.Filled.Error">No response</MudChip>; break;
+                        }
+                    </div>
+
+                    <MudText Typo="Typo.caption" Class="mb-3 d-block" Style="opacity:0.7;">
+                        Your WebUI must be launched with <code>--api</code> (add <code>--listen</code> to reach it from other devices).
+                    </MudText>
+
+                    <MudTextField @bind-Value="_batchPath" Label="Server launch script (.bat)" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen"
+                                  OnAdornmentClick="@(() => BrowseFile(p => _batchPath = p, _batchPath, "*.bat", "Choose the launch script"))"
+                                  HelperText="Optional: the script the Server tab runs to start SD (e.g. webui-user.bat)." Class="mb-2" />
+
+                    <MudText Typo="Typo.subtitle2" Class="mt-2 mb-1">Model folders</MudText>
+                    <MudTextField @bind-Value="_loraPath" Label="LoRA folder" Required="true" RequiredError="Required"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen"
+                                  OnAdornmentClick="@(() => BrowseFolder(p => _loraPath = p, _loraPath))"
+                                  HelperText="Where your LoRA files live (used by the LoRA browser)." Class="mb-2" />
+                    <MudTextField @bind-Value="_modelsRoot" Label="Models root folder" Required="true" RequiredError="Required"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen"
+                                  OnAdornmentClick="@(() => BrowseFolder(p => _modelsRoot = p, _modelsRoot))"
+                                  HelperText="Your SD models root (where Civitai downloads are saved)." />
+
+                    @if (!ServerStepValid)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error" Class="mt-2 d-block">
+                            Enter the server address and both model folders to continue.
+                        </MudText>
+                    }
+                    break;
+
+                case "civitai":
+                    <MudText Typo="Typo.subtitle1" Class="mb-2">Civitai API key</MudText>
+                    <MudText Typo="Typo.body2" Class="mb-3" Style="opacity:0.8;">
+                        Optional, but needed to browse/download models from Civitai and to see NSFW-restricted content there.
+                        Create one under your Civitai account → Settings → API Keys.
+                    </MudText>
+                    <MudTextField @bind-Value="_civitaiKey" Label="API key" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  InputType="InputType.Password" Adornment="Adornment.End" Clearable="true"
+                                  HelperText="Stored only on this device." />
+                    break;
+
+                case "content":
+                    <MudText Typo="Typo.subtitle1" Class="mb-1">Content visibility</MudText>
+                    <MudText Typo="Typo.body2" Class="mb-3" Style="opacity:0.8;">Control how mature content is shown on this device.</MudText>
+
+                    <MudText Typo="Typo.subtitle2">Blur these ratings</MudText>
+                    <div class="d-flex flex-wrap mb-2">
+                        @foreach (var c in RatingCategories)
+                        {
+                            <MudCheckBox T="bool" Dense="true" Color="Color.Warning" Label="@c.Label"
+                                         Value="@HasBit(_blurMask, c.Bit)" ValueChanged="@((bool v) => SetBlurBit(c.Bit, v))" />
+                        }
+                    </div>
+
+                    <MudText Typo="Typo.subtitle2">Hide these ratings completely</MudText>
+                    <div class="d-flex flex-wrap mb-2">
+                        @foreach (var c in RatingCategories)
+                        {
+                            <MudCheckBox T="bool" Dense="true" Color="Color.Error" Label="@c.Label"
+                                         Value="@HasBit(_hideMask, c.Bit)" ValueChanged="@((bool v) => SetHideBit(c.Bit, v))" />
+                        }
+                    </div>
+
+                    <MudSwitch T="bool" @bind-Value="_revealOnHover" Label="Reveal blurred content on hover" Color="Color.Warning" />
+                    <MudSwitch T="bool" @bind-Value="_blockNsfwGallery" Label="Don't open NSFW in the gallery viewer" Color="Color.Error" />
+                    break;
+            }
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Skip" Color="Color.Default">Skip setup</MudButton>
+        <MudSpacer />
+        @if (_step > 0)
+        {
+            <MudButton OnClick="@(() => _step--)" StartIcon="@Icons.Material.Filled.ArrowBack">Back</MudButton>
+        }
+        @if (_step < _steps.Count - 1)
+        {
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" EndIcon="@Icons.Material.Filled.ArrowForward"
+                       OnClick="@(() => _step++)" Disabled="@(_steps[_step] == "server" && !ServerStepValid)">Next</MudButton>
+        }
+        else
+        {
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Check"
+                       OnClick="Finish" Disabled="@(IncludeServerSetup && !ServerStepValid)">Finish</MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    /// <summary>Show the host-only server / model-folder step. False on remote (LAN) devices.</summary>
+    [Parameter] public bool IncludeServerSetup { get; set; } = true;
+
+    private List<string> _steps = new();
+    private int _step;
+
+    private string _serverAddress = "";
+    private string _batchPath = "";
+    private string _loraPath = "";
+    private string _modelsRoot = "";
+    private string _testStatus = ""; // "", "testing", "ok", "fail"
+
+    private string _civitaiKey = "";
+    private int _blurMask;
+    private int _hideMask;
+    private bool _revealOnHover = true;
+    private bool _blockNsfwGallery;
+
+    private static readonly (string Label, int Bit)[] RatingCategories =
+    {
+        ("PG", CivitaiNsfw.Pg),
+        ("PG-13", CivitaiNsfw.Pg13),
+        ("R", CivitaiNsfw.R),
+        ("X", CivitaiNsfw.X),
+        ("XXX", CivitaiNsfw.Xxx),
+    };
+
+    private static string StepTitle(string key) => key switch
+    {
+        "welcome" => "Welcome",
+        "server" => "Server",
+        "civitai" => "Civitai",
+        "content" => "Content",
+        _ => key
+    };
+
+    // Server step requires the address and both model folders (only relevant when shown).
+    private bool ServerStepValid =>
+        !string.IsNullOrWhiteSpace(_serverAddress) &&
+        !string.IsNullOrWhiteSpace(_loraPath) &&
+        !string.IsNullOrWhiteSpace(_modelsRoot);
+
+    private static bool HasBit(int mask, int bit) => (mask & bit) != 0;
+    private void SetBlurBit(int bit, bool on) => _blurMask = on ? _blurMask | bit : _blurMask & ~bit;
+    private void SetHideBit(int bit, bool on) => _hideMask = on ? _hideMask | bit : _hideMask & ~bit;
+
+    protected override void OnInitialized()
+    {
+        _steps = IncludeServerSetup
+            ? new List<string> { "welcome", "server", "civitai", "content" }
+            : new List<string> { "welcome", "civitai", "content" };
+
+        _serverAddress = Configuration["SdServerAddress"] ?? "http://127.0.0.1:7860/";
+        _batchPath = Configuration["SdServerBatchPath"] ?? "";
+        _loraPath = Configuration["BaseLoraPath"] ?? "";
+        _modelsRoot = Configuration["ModelsRoot"] ?? "";
+
+        _civitaiKey = UiPrefs.CivitaiApiKey;
+        _blurMask = UiPrefs.BlurLevelMask;
+        _hideMask = UiPrefs.HideLevelMask;
+        _revealOnHover = UiPrefs.RevealOnHover;
+        _blockNsfwGallery = UiPrefs.BlockNsfwGallery;
+    }
+
+    private async Task BrowseFolder(Action<string> apply, string? initial)
+    {
+        var parameters = new DialogParameters { ["InitialPath"] = initial };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true, CloseOnEscapeKey = true, BackdropClick = true };
+        var dlg = await DialogService.ShowAsync<FolderPickerDialog>("Choose a folder", parameters, options);
+        var res = await dlg.Result;
+        if (res is not null && !res.Canceled && res.Data is string p && !string.IsNullOrEmpty(p)) { apply(p); StateHasChanged(); }
+    }
+
+    private async Task BrowseFile(Action<string> apply, string? initial, string pattern, string title)
+    {
+        string? start = initial;
+        try { if (!string.IsNullOrWhiteSpace(initial) && File.Exists(initial)) start = Path.GetDirectoryName(initial); } catch { }
+        var parameters = new DialogParameters { ["InitialPath"] = start, ["FilePattern"] = pattern, ["Title"] = title };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true, CloseOnEscapeKey = true, BackdropClick = true };
+        var dlg = await DialogService.ShowAsync<FolderPickerDialog>(title, parameters, options);
+        var res = await dlg.Result;
+        if (res is not null && !res.Canceled && res.Data is string p && !string.IsNullOrEmpty(p)) { apply(p); StateHasChanged(); }
+    }
+
+    private async Task TestConnection()
+    {
+        _testStatus = "testing";
+        StateHasChanged();
+        try
+        {
+            using var http = new HttpClient { BaseAddress = new Uri(_serverAddress.Trim()) };
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+            var res = await http.GetAsync("sdapi/v1/progress", cts.Token);
+            _testStatus = res.IsSuccessStatusCode ? "ok" : "fail";
+        }
+        catch { _testStatus = "fail"; }
+        StateHasChanged();
+    }
+
+    private async Task Finish()
+    {
+        // Host-only: write server + model folders to settings.json (merging unmanaged keys).
+        if (IncludeServerSetup)
+        {
+            try
+            {
+                var path = Path.Combine(Directory.GetCurrentDirectory(), "settings.json");
+                Dictionary<string, string> data;
+                try
+                {
+                    data = File.Exists(path)
+                        ? JsonSerializer.Deserialize<Dictionary<string, string>>(await File.ReadAllTextAsync(path)) ?? new()
+                        : new();
+                }
+                catch { data = new(); }
+
+                data["SdServerAddress"] = _serverAddress.Trim();
+                data["SdServerBatchPath"] = _batchPath.Trim();
+                data["BaseLoraPath"] = _loraPath.Trim();
+                data["ModelsRoot"] = _modelsRoot.Trim();
+                if (!data.ContainsKey("TagPath"))
+                    data["TagPath"] = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "tags");
+
+                var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+                await File.WriteAllTextAsync(path, json);
+            }
+            catch (Exception ex)
+            {
+                Snackbar.Add("Couldn't save server settings: " + ex.Message, Severity.Error);
+            }
+        }
+
+        // Per-device preferences (localStorage) — on every device.
+        UiPrefs.CivitaiApiKey = _civitaiKey?.Trim() ?? "";
+        UiPrefs.BlurLevelMask = _blurMask;
+        UiPrefs.HideLevelMask = _hideMask;
+        UiPrefs.RevealOnHover = _revealOnHover;
+        UiPrefs.BlockNsfwGallery = _blockNsfwGallery;
+        UiPrefs.OnboardingCompleted = true;
+        await UiPrefs.SaveAsync();
+
+        Snackbar.Add("You're all set!", Severity.Success);
+        if (IncludeServerSetup)
+            Workspace.NotifySettingsSaved(); // reload server-derived state on the home page
+        MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    private async Task Skip()
+    {
+        UiPrefs.OnboardingCompleted = true;
+        await UiPrefs.SaveAsync();
+        MudDialog.Close(DialogResult.Ok(false));
+    }
+}

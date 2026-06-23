@@ -1,0 +1,919 @@
+@using MudBlazor
+@using System.Text.RegularExpressions
+@using SimpleDiffusion.Infrastructure
+@using SimpleDiffusion.Components.Civitai
+@rendermode InteractiveServer
+@implements IDisposable
+@inject IJSRuntime JS
+@inject HttpClient Http
+@inject IDialogService DialogService
+@inject NavigationManager Nav
+@inject ISnackbar Snackbar
+@inject SimpleDiffusion.Components.Services.UiPreferences Prefs
+@inject SimpleDiffusion.Components.Civitai.CivitaiDownloadManager Downloads
+
+<MudDialog @onkeydown="OnGalleryKeyDown" Class="sd-dialog-mobile-full">
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Info" Class="mr-3 mb-n1" />
+            @(Lora?.name ?? "Model Details")
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudGrid Spacing="3">
+            <MudItem xs="12" md="8" Class="order-2 order-md-1">
+                <div class="d-flex justify-space-between align-center">
+                    <MudText Typo="Typo.caption">Server path</MudText>
+                    <div class="d-flex align-center" style="gap:2px;">
+                        @if (!string.IsNullOrEmpty(Lora?.path) && CivitaiClientHelpers.IsLocalClient(Nav))
+                        {
+                            <MudTooltip Text="Open folder">
+                                <MudIconButton Icon="@Icons.Material.Filled.FolderOpen" Size="Size.Small" OnClick="OpenContainingFolder" />
+                            </MudTooltip>
+                        }
+                        @if (_refreshing)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mx-2" />
+                        }
+                        else
+                        {
+                            <MudTooltip Text="Fetch metadata">
+                                <MudIconButton Icon="@Icons.Material.Filled.CloudSync" Size="Size.Small" OnClick="RefreshMetadata" />
+                            </MudTooltip>
+                        }
+                        @if (_checking)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mx-2" />
+                        }
+                        else
+                        {
+                            <MudTooltip Text="Check for updates">
+                                <MudIconButton Icon="@Icons.Material.Filled.Update" Size="Size.Small" OnClick="CheckForUpdate" />
+                            </MudTooltip>
+                        }
+                        <MudTooltip Text="Delete">
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="DeleteSelf" />
+                        </MudTooltip>
+                    </div>
+                </div>
+                <MudPaper Class="pa-2 mb-2" Style="overflow-wrap:anywhere;" Elevation="0" Outlined="true">
+                    @(Path.GetDirectoryName(Lora?.path))
+                </MudPaper>
+
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-4">
+                    <MudText Typo="Typo.caption">Rating: @SimpleDiffusion.Components.Civitai.CivitaiNsfw.Label(LoraLevel)</MudText>
+                    <MudText Typo="Typo.caption">Override:</MudText>
+                    <MudSelect T="int" Value="@(Prefs.ManualRating(ManualKey) ?? 0)" ValueChanged="SetManualRating"
+                               Dense="true" Margin="Margin.Dense" Style="width: 110px;">
+                        <MudSelectItem T="int" Value="0">Auto</MudSelectItem>
+                        <MudSelectItem T="int" Value="@SimpleDiffusion.Components.Civitai.CivitaiNsfw.Pg">PG</MudSelectItem>
+                        <MudSelectItem T="int" Value="@SimpleDiffusion.Components.Civitai.CivitaiNsfw.Pg13">PG-13</MudSelectItem>
+                        <MudSelectItem T="int" Value="@SimpleDiffusion.Components.Civitai.CivitaiNsfw.R">R</MudSelectItem>
+                        <MudSelectItem T="int" Value="@SimpleDiffusion.Components.Civitai.CivitaiNsfw.X">X</MudSelectItem>
+                        <MudSelectItem T="int" Value="@SimpleDiffusion.Components.Civitai.CivitaiNsfw.Xxx">XXX</MudSelectItem>
+                    </MudSelect>
+                </MudStack>
+
+                @if (_showVersionSelector)
+                {
+                    <MudSelect T="string" Label="Version" Value="@Lora?.path" ValueChanged="OnVersionChanged"
+                               Dense="true" Margin="Margin.Dense" Class="mb-3">
+                        @foreach (var v in _versions)
+                        {
+                            <MudSelectItem T="string" Value="@v.Path">@v.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                }
+
+                <MudTabs Rounded="true" Centered="true" Position="Position.Top" MinimumTabWidth="50px" PanelClass="pt-3 full-height-panel" Class="full-height-tabs" Color="Color.Primary">
+
+                    <MudTabPanel Icon="@Icons.Material.Filled.Info" Text="Overview">
+                        <MudText Typo="Typo.subtitle2">CivitAI Metadata</MudText>
+                        <MudPaper Class="pa-3 mt-2" Outlined="true">
+                            <MudText Typo="Typo.body2"><b>Name:</b> @Meta?.CivitaiName</MudText>
+                            <MudText Typo="Typo.body2"><b>Creator:</b> @Meta?.Creator</MudText>
+                            <MudText Typo="Typo.body2"><b>Base model:</b> @Meta?.BaseModel</MudText>
+                            <MudText Typo="Typo.body2"><b>Version:</b> @Meta?.VersionName</MudText>
+                        </MudPaper>
+
+                        <MudText Typo="Typo.subtitle2" Class="mt-4">Sidecar prompt / tags (.txt)</MudText>
+                        <MudTextField Value="@Meta?.SidecarText"
+                                      Lines="6"
+                                      ReadOnly="true"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Class="mt-2" />
+                    </MudTabPanel>
+
+                    <MudTabPanel Icon="@Icons.Material.Filled.Label" Text="Tags">
+                        <MudStack Row="true" Spacing="1" Class="mt-2" Style="flex-wrap:wrap;">
+                            @if (Meta?.Tags != null)
+                            {
+                                foreach (var t in Meta.Tags)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Filled">@t</MudChip>
+                                }
+                            }
+                        </MudStack>
+
+                        <MudStack Spacing="1">
+                            <MudText Typo="Typo.subtitle2" Class="mt-4">Trained words</MudText>
+                            <MudTextField Value="@(Meta?.TrainedWords != null ? string.Join(", ", Meta.TrainedWords) : "")"
+                                          Lines="6"
+                                          ReadOnly="true"
+                                          Variant="Variant.Outlined"
+                                          Margin="Margin.Dense"
+                                          Class="mt-2" />
+                        </MudStack>
+
+                        <MudStack Spacing="1">
+                            <MudText Typo="Typo.subtitle2" Class="mt-4">Random Tags</MudText>
+                            <MudTextField Value="@RandomTags"
+                                          Lines="6"
+                                          ReadOnly="true"
+                                          Variant="Variant.Outlined"
+                                          Margin="Margin.Dense"
+                                          Class="mt-2"/>
+                            <MudButton OnClick="@(Meta == null ? () => GenerateRandomTags(new List<string>()) : () => GenerateRandomTags(Meta.TrainedWords))" Variant="Variant.Filled" Color="Color.Primary">Generate Random Tags</MudButton>
+                        </MudStack>
+                    </MudTabPanel>
+
+                    <MudTabPanel Icon="@Icons.Material.Filled.TextSnippet" Text="HTML">
+                        @if (!string.IsNullOrWhiteSpace(Meta?.HtmlPage))
+                        {
+                            <iframe class="lora-html"
+                                    sandbox="allow-scripts"
+                                    srcdoc="@ProcessedHtml"
+                                    style="height: 91%">
+                            </iframe>
+                        }
+                        else
+                        {
+                            <MudAlert Severity="Severity.Normal">No HTML page description available.</MudAlert>
+                        }
+                    </MudTabPanel>
+
+                    @*<MudTabPanel Text="Raw JSON">
+                        <MudTextField Value="@System.Text.Json.JsonSerializer.Serialize(Meta, new System.Text.Json.JsonSerializerOptions { WriteIndented = true })"
+                                      Lines="10"
+                                      ReadOnly="true"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Style="font-family:monospace; font-size:0.8rem;" />
+                    </MudTabPanel>*@
+                </MudTabs>
+            </MudItem>
+
+            <MudItem xs="12" md="4" Class="order-1 order-md-2">
+                @* Gallery Header with Download All Action *@
+                <div class="d-flex justify-space-between align-center mb-4">
+                    <MudText Typo="Typo.subtitle2">Preview Gallery</MudText>
+                    @if (Media.Any(m => m.Kind == "image" || m.Kind == "video"))
+                    {
+                        <MudButton Variant="Variant.Filled"
+                                   StartIcon="@Icons.Material.Filled.Archive"
+                                   Color="Color.Secondary"
+                                   Size="Size.Small"
+                                   Disabled="@_isZipping"
+                                   OnClick="DownloadAllAsZip">
+                            @if (_isZipping)
+                            {
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                                <span>Zipping...</span>
+                            }
+                            else
+                            {
+                                <span>Download ZIP</span>
+                            }
+                        </MudButton>
+                    }
+                </div>
+
+                <div class="gallery-lock @(BlurMedia ? "nsfw-on" : "")">
+                    @if (!Media.Any())
+                    {
+                        <MudPaper Height="400px" Width="100%"
+                                  Class="d-flex align-center justify-center overflow-hidden pa-2"
+                                  Style="background-color: var(--mud-palette-background-grey);"
+                                  Elevation="4">
+                            <img src="images/card-no-preview.png" class="gallery-img" style="max-height:100%; max-width:100%; object-fit:contain;" />
+                        </MudPaper>
+                    }
+                    else
+                    {
+                        var img = Media[_previewIndex];
+                        <MudPaper Height="400px" Width="100%"
+                                  Class="d-flex align-center justify-center overflow-hidden pa-0"
+                                  Style="background-color: var(--mud-palette-background-grey); position: relative"
+                                  Elevation="4">
+                            @if (Media.Count > 1)
+                            {
+                                <div style="position: absolute; top: 12px; right: 12px; z-index: 100; pointer-events: none;">
+                                    <MudChip T="string" Variant="Variant.Filled"
+                                             Color="Color.Default"
+                                             Style="background: rgba(0,0,0,0.55) !important; color: white !important; font-weight: 600; font-size: 0.75rem; border-radius: 999px; margin: 0;"
+                                             Size="Size.Small">
+                                        <MudIcon Icon="@Icons.Material.Filled.Collections" Style="font-size: 1rem; margin-right: 4px; color: white !important;" />
+                                        @(_previewIndex + 1) / @Media.Count
+                                    </MudChip>
+                                </div>
+                            }
+                            @if (Media.Count == 1)
+                            {
+                                @if (img.Kind == "video")
+                                {
+                                    <video class="gallery-img cursor-pointer civ-novol" muted playsinline loop autoplay="@Prefs.AutoplayVideos" preload="metadata" style="max-height:100%; max-width:100%; object-fit:contain; display:block;" @onclick="@(() => OpenLightbox(0))">
+                                        <source src="@img.Url" type="@img.Mime" />
+                                    </video>
+                                }
+                                else
+                                {
+                                    <MudImage Src="@img.Url"
+                                              ObjectFit="ObjectFit.Contain"
+                                              Class="rounded-lg cursor-pointer"
+                                              Style="max-height:100%; max-width:100%;"
+                                              @onclick="@(() => OpenLightbox(0))" />
+                                }
+                            }
+                            else
+                            {
+                                <MudCarousel Class="gallery-carousel" Style="height: 100%; width: 100%;"
+                                             @bind-SelectedIndex="_previewIndex"
+                                             ShowBullets="false"
+                                             AutoCycle="false"
+                                             TData="string"
+                                             EnableSwipeGesture="true">
+                                    @foreach (var (m, index) in Media.Select((val, idx) => (val, idx)))
+                                    {
+                                        <MudCarouselItem Transition="Transition.None">
+                                            <div style="height: 100%; width: 100%; display: flex; align-items: center; justify-content: center; position: relative;">
+                                                @if (_previewIndex == index)
+                                                {
+                                                    @if (m.Kind == "video")
+                                                    {
+                                                        <video class="gallery-img cursor-pointer civ-novol" muted playsinline loop autoplay="@Prefs.AutoplayVideos" preload="metadata" style="max-height:100%; max-width:100%; object-fit:contain; display:block;" @onclick="@(() => OpenLightbox(index))">
+                                                            <source src="@m.Url" type="@m.Mime" />
+                                                        </video>
+                                                    }
+                                                    else
+                                                    {
+                                                        <MudImage Src="@m.Url"
+                                                                  ObjectFit="ObjectFit.Contain"
+                                                                  Class="rounded-lg cursor-pointer"
+                                                                  Style="max-height:100%; max-width:100%;"
+                                                                  @onclick="@(() => OpenLightbox(index))" />
+                                                    }
+                                                }
+                                            </div>
+                                        </MudCarouselItem>
+                                    }
+                                </MudCarousel>
+                            }
+                        </MudPaper>
+
+                        <div style="display:flex; gap:8px; margin-top:0.5em">
+                            @if (img.Kind == "image")
+                            {
+                                <MudTooltip Text="Describe image (CLIP)">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Psychology"
+                                                   Variant="Variant.Filled"
+                                                   Color="Color.Primary"
+                                                   Size="Size.Small"
+                                                   OnClick="@(() => InterrogateImage(_previewIndex, "clip"))"
+                                                   Disabled="@_captionLoading.Contains(_previewIndex)" />
+                                </MudTooltip>
+
+                                <MudTooltip Text="Tags (DeepDanbooru)">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Label"
+                                                   Variant="Variant.Filled"
+                                                   Color="Color.Secondary"
+                                                   Size="Size.Small"
+                                                   OnClick="@(() => InterrogateImage(_previewIndex, "deepdanbooru"))"
+                                                   Disabled="@_captionLoading.Contains(_previewIndex)" />
+                                </MudTooltip>
+
+                                <SendMenu Resolve="@(() => ResolvePreviewBase64(_previewIndex))" OnSent="@(() => MudDialog.Close())" />
+                            }
+                        </div>
+
+                        @if (_captionLoading.Contains(_previewIndex))
+                        {
+                            <MudPaper Class="mt-2 pa-2" Elevation="1" Style="background: rgba(0,0,0,0.06);">
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="ml-2" />
+                            </MudPaper>
+                        }
+
+                        @if (_captions.TryGetValue(_previewIndex, out var cap))
+                        {
+                            <MudPaper Class="mt-2 pa-2" Elevation="1" Style="background: rgba(0,0,0,0.06);">
+                                <MudText Typo="Typo.caption" Style="word-break: break-word;">
+                                    @cap
+                                </MudText>
+                            </MudPaper>
+                        }
+                    }
+                </div>
+            </MudItem>
+
+        </MudGrid>
+    </DialogContent>
+
+    @*We don't need this here, since the base use adds an X at the top right
+    <DialogActions>
+        <MudButton OnClick="Close" Color="Color.Primary" Variant="Variant.Filled">Close</MudButton>
+    </DialogActions>*@
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public LoraModel? Lora { get; set; }
+
+    [Parameter]
+    public HttpClient SdHttpClient { get; set; } = default!;
+
+    // Loaded inside the dialog (so opening is instant), not passed in.
+    private LoraMetaDto? Meta { get; set; }
+    private List<Infrastructure.LoraPreviewItemDto> Media { get; set; } = new();
+
+    private readonly Dictionary<int, string> _captions = new();
+    private readonly HashSet<int> _captionLoading = new();
+    private bool _isZipping = false;
+    private int _previewIndex = 0;
+
+    // Sibling versions in the same folder (each model file is a version).
+    private List<(string Path, string Name)> _versions = new();
+    private bool _showVersionSelector;
+
+    private static readonly string[] VersionModelExts = { ".safetensors", ".ckpt", ".pt", ".pth", ".bin" };
+    private static readonly string[] VersionImgExts = { ".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4" };
+
+    protected override async Task OnInitializedAsync()
+    {
+        BuildVersionList();
+        await LoadMetaAsync();
+    }
+
+    /// <summary>Fetch the model's metadata + preview media (so the dialog opens instantly, then fills in).</summary>
+    private async Task LoadMetaAsync()
+    {
+        if (string.IsNullOrEmpty(Lora?.path)) return;
+        try
+        {
+            Meta = await Http.GetFromJsonAsync<LoraMetaDto>($"/lora-meta?loraPath={Uri.EscapeDataString(Lora.path)}");
+        }
+        catch { Meta ??= new LoraMetaDto(); }
+        try
+        {
+            var previews = await Http.GetFromJsonAsync<LoraPreviewListDto>($"/lora-previews?loraPath={Uri.EscapeDataString(Lora.path)}");
+            Media = previews?.Items ?? new();
+        }
+        catch { /* previews optional */ }
+        StateHasChanged();
+    }
+
+    private void BuildVersionList()
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(Lora?.path);
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
+
+            _versions = Directory.EnumerateFiles(dir)
+                .Where(f => VersionModelExts.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .OrderBy(f => f)
+                .Select(f => (Path: f, Name: Path.GetFileNameWithoutExtension(f)))
+                .ToList();
+
+            // Only offer the selector when more than one version actually has its own
+            // html/preview content to show.
+            bool HasContent(string p)
+            {
+                var b = Path.GetFileNameWithoutExtension(p);
+                if (File.Exists(Path.Combine(dir, b + ".html"))) return true;
+                return VersionImgExts.Any(e => File.Exists(Path.Combine(dir, b + e)))
+                    || Directory.EnumerateFiles(dir, b + ".preview.*").Any();
+            }
+
+            _showVersionSelector = _versions.Count(v => HasContent(v.Path)) > 1;
+        }
+        catch { /* selector is best-effort */ }
+    }
+
+    private void OnVersionChanged(string path)
+    {
+        if (!string.Equals(path, Lora?.path, StringComparison.OrdinalIgnoreCase))
+            MudDialog.Close(DialogResult.Ok(new Infrastructure.LoraVersionSwitch { Path = path }));
+    }
+
+    private DotNetObjectReference<LoraMetaDialog>? _selfRef;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Listen for image clicks coming from the sandboxed HTML iframe.
+            _selfRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("civsfzGallery.register", _selfRef);
+        }
+    }
+
+    /// <summary>Called from JS when an image is clicked inside the model-details HTML iframe.</summary>
+    [JSInvokable]
+    public Task OnHtmlImageClicked(string fileName, int index)
+    {
+        var i = Media.FindIndex(m => string.Equals(m.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        if (i < 0) i = (index >= 0 && index < Media.Count) ? index : -1;
+        if (i >= 0) OpenLightbox(i);
+        return Task.CompletedTask;
+    }
+
+    public void Dispose()
+    {
+        try { _ = JS.InvokeVoidAsync("civsfzGallery.unregister"); } catch { }
+        _selfRef?.Dispose();
+    }
+
+    private string ManualKey => $"lora:{Lora?.name}";
+    private int? LoraLevel => Prefs.EffectiveLevel(ManualKey, Meta?.NsfwLevel ?? 0);
+    private bool BlurMedia => Prefs.ShouldBlur(LoraLevel);
+
+    private async Task SetManualRating(int level)
+    {
+        await Prefs.SetManualRatingAsync(ManualKey, level == 0 ? (int?)null : level);
+        StateHasChanged();
+    }
+
+    private bool _checking;
+
+    /// <summary>Check Civitai (by file hash) for a newer version of the same base model.</summary>
+    private async Task CheckForUpdate()
+    {
+        if (string.IsNullOrEmpty(Lora?.path)) return;
+        _checking = true;
+        StateHasChanged();
+        try
+        {
+            var r = await Downloads.CheckForUpdateAsync(Lora.path, Prefs.CivitaiApiKey);
+            if (r.Current is null)
+            {
+                Snackbar.Add("Couldn't identify this model on Civitai.", Severity.Warning);
+                return;
+            }
+            if (r.Newer is null)
+            {
+                Snackbar.Add($"You have the latest version for {r.Current.BaseModel}.", Severity.Info);
+                return;
+            }
+
+            // Show the version picker (all versions, with downloaded ✓ and "Newer" flags) so
+            // the user can choose which to download.
+            var parameters = new DialogParameters
+            {
+                ["Model"] = r.Model,
+                ["CompatibleBaseModels"] = new List<string> { r.Current.BaseModel ?? "" },
+                ["CurrentVersionId"] = r.Current.Id
+            };
+            var options = new DialogOptions
+            {
+                CloseButton = true,
+                CloseOnEscapeKey = true,
+                BackdropClick = true,
+                MaxWidth = MaxWidth.Small,
+                FullWidth = true
+            };
+            await DialogService.ShowAsync<SimpleDiffusion.Components.Civitai.CivitaiVersionPickDialog>(
+                "Versions", parameters, options);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Update check failed: " + ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _checking = false;
+            StateHasChanged();
+        }
+    }
+
+    private bool _refreshing;
+
+    /// <summary>Look this model up on Civitai by file hash and (re)write its sidecars.</summary>
+    private async Task RefreshMetadata()
+    {
+        if (string.IsNullOrEmpty(Lora?.path)) return;
+        _refreshing = true;
+        StateHasChanged();
+        try
+        {
+            var ok = await Downloads.RefreshMetadataAsync(Lora.path, Prefs.CivitaiApiKey);
+            if (ok)
+            {
+                Snackbar.Add("Metadata refreshed.", Severity.Success);
+                MudDialog.Close(DialogResult.Ok("refreshed"));
+            }
+            else
+            {
+                Snackbar.Add("No match found on Civitai for this file.", Severity.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Refresh failed: " + ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _refreshing = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OpenLightbox(int index)
+    {
+        if (Prefs.BlockNsfwGallery && BlurMedia)
+        {
+            Snackbar.Add("NSFW gallery viewing is disabled in settings.", Severity.Info);
+            return;
+        }
+
+        ImageLightbox.ShowAsync(DialogService, Media.Select(m => m.Url).ToList(), index, closeOnBackdropClick: true);
+    }
+
+    private void OnGalleryKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") Close();
+    }
+
+    /// <summary>Called from the JS key bridge: navigate the preview gallery (dir: +1 / -1).</summary>
+    [JSInvokable]
+    public void OnGalleryArrow(int dir)
+    {
+        if (Media.Count <= 1) return;
+        _previewIndex = ((_previewIndex + dir) % Media.Count + Media.Count) % Media.Count;
+        StateHasChanged();
+    }
+
+    private void Close() => MudDialog.Close();
+
+    private async Task OpenContainingFolder()
+    {
+        if (!string.IsNullOrEmpty(Lora?.path))
+            await CivitaiClientHelpers.OpenFolderAsync(Http, Lora.path);
+    }
+
+    private static readonly string[] ModelExts = { ".safetensors", ".ckpt", ".pt", ".pth", ".bin" };
+
+    /// <summary>Delete this model (or, when several versions share the folder, a chosen set).</summary>
+    private async Task DeleteSelf()
+    {
+        if (string.IsNullOrEmpty(Lora?.path)) return;
+
+        var dir = Path.GetDirectoryName(Lora.path);
+        var siblings = (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+            ? Directory.EnumerateFiles(dir)
+                .Where(f => ModelExts.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .ToList()
+            : new List<string> { Lora.path };
+
+        List<string> toDelete;
+
+        if (siblings.Count > 1)
+        {
+            // Multiple versions in this folder — let the user choose which to delete.
+            var items = siblings
+                .OrderBy(p => p)
+                .Select(p => new LoraDeleteDialog.VersionItem
+                {
+                    Path = p,
+                    Name = Path.GetFileName(p),
+                    Selected = string.Equals(p, Lora.path, StringComparison.OrdinalIgnoreCase)
+                })
+                .ToList();
+
+            var pickerOptions = new DialogOptions { CloseButton = true, CloseOnEscapeKey = true, BackdropClick = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+            var dlg = await DialogService.ShowAsync<LoraDeleteDialog>(
+                "Delete versions", new DialogParameters { ["Versions"] = items }, pickerOptions);
+            var res = await dlg.Result;
+            if (res is null || res.Canceled || res.Data is not List<string> selected || selected.Count == 0)
+                return;
+            toDelete = selected;
+        }
+        else
+        {
+            var confirmed = await DialogService.ShowMessageBox(
+                "Delete model?",
+                (MarkupString)$"This permanently deletes <b>{System.Net.WebUtility.HtmlEncode(Lora.name)}</b> and its preview/metadata files from disk. This cannot be undone.",
+                yesText: "Delete", cancelText: "Cancel");
+            if (confirmed != true) return;
+            toDelete = new List<string> { Lora.path };
+        }
+
+        try
+        {
+            foreach (var modelPath in toDelete)
+            {
+                var d = Path.GetDirectoryName(modelPath);
+                if (string.IsNullOrEmpty(d) || !Directory.Exists(d)) continue;
+
+                var fileName = Path.GetFileName(modelPath);
+                var baseName = Path.GetFileNameWithoutExtension(modelPath);
+                foreach (var f in Directory.EnumerateFiles(d))
+                {
+                    var name = Path.GetFileName(f);
+                    if (name.Equals(fileName, StringComparison.OrdinalIgnoreCase) ||
+                        name.StartsWith(baseName + ".", StringComparison.OrdinalIgnoreCase))
+                    {
+                        try { System.IO.File.Delete(f); } catch { }
+                    }
+                }
+            }
+
+            // Remove the folder if no model versions remain (clears tags.txt and leftovers).
+            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+            {
+                var hasModelsLeft = Directory.EnumerateFiles(dir)
+                    .Any(f => ModelExts.Contains(Path.GetExtension(f).ToLowerInvariant()));
+                if (!hasModelsLeft)
+                {
+                    try { Directory.Delete(dir, recursive: true); } catch { }
+                }
+            }
+
+            MudDialog.Close(DialogResult.Ok("deleted"));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Delete failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    // Memoized: the regex rewrite over the (potentially large) HTML page would otherwise re-run on
+    // every render — and a fetch triggers several. Recompute only when an input actually changes.
+    private string? _processedHtmlCache;
+    private (string? Html, bool Blur, bool Hover, int Media)? _processedHtmlKey;
+
+    private string ProcessedHtml
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(Meta?.HtmlPage)) return "";
+
+            var key = (Meta.HtmlPage, BlurMedia, Prefs.RevealOnHover, Media.Count);
+            if (_processedHtmlKey != key)
+            {
+                var html = RewriteHtmlWithLocalMedia(Meta.HtmlPage, Media);
+
+                // Blur every image in the embedded page when this model's rating is in the blur set.
+                if (BlurMedia)
+                {
+                    var hover = Prefs.RevealOnHover ? "img:hover{filter:none}" : "";
+                    html = InjectIntoHeadOrTop(html,
+                        $"<style>img{{filter:blur(28px);transition:filter .15s ease}}{hover}</style>");
+                }
+
+                _processedHtmlCache = html;
+                _processedHtmlKey = key;
+            }
+
+            return _processedHtmlCache ?? "";
+        }
+    }
+
+    public static string RewriteHtmlWithLocalMedia(string html, IEnumerable<Infrastructure.LoraPreviewItemDto> media)
+    {
+        if (string.IsNullOrWhiteSpace(html)) return html;
+
+        var map = media
+            .Where(m => !string.IsNullOrWhiteSpace(m.FileName) && !string.IsNullOrWhiteSpace(m.Url))
+            .GroupBy(m => m.FileName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Url, StringComparer.OrdinalIgnoreCase);
+
+        html = InjectIntoHeadOrTop(html, DarkCssInjection());
+
+        html = Regex.Replace(
+            html,
+            @"(<img\b[^>]*\bsrc\s*=\s*)(?:""(?<src>[^""]+)""|(?<src>[^\s>]+))",
+            m =>
+            {
+                var prefix = m.Groups[1].Value;
+                var src = m.Groups["src"].Value.Trim().Trim('"');
+
+                var file = Path.GetFileName(src);
+                if (map.TryGetValue(file, out var newUrl))
+                    return prefix + "\"" + newUrl + "\"";
+
+                return m.Value;
+            },
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        return html;
+    }
+
+    private static string DarkCssInjection() => @"
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 14px; background: #0f1117; color: #e6e6e6; font: 14px/1.5 system-ui, Segoe UI, Roboto, Arial; }
+  a { color: #9bbcff; }
+  h1,h2,h3 { margin: 10px 0 6px; }
+  table { border-collapse: collapse; width: 100%; border-radius: 10px; overflow: hidden; }
+  th, td { border: 1px solid rgba(255,255,255,0.10); padding: 8px; vertical-align: top; }
+  .sampleimgs img { border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); }
+  .civsfz-modelInformation { overflow-wrap: anywhere; }
+</style>";
+
+    private static string InjectIntoHeadOrTop(string html, string injection)
+    {
+        var idx = html.IndexOf("</head>", StringComparison.OrdinalIgnoreCase);
+        return idx >= 0 ? html.Insert(idx, injection) : injection + html;
+    }
+
+    string RandomTags = "";
+    Random R = new Random();
+
+    private void GenerateRandomTags(List<string> TrainedKeywords)
+    {
+        if (TrainedKeywords == null || TrainedKeywords.Count == 0) return;
+
+        int count = R.Next(1, TrainedKeywords.Count + 1);
+        var shuffled = TrainedKeywords
+            .Where(w => !string.IsNullOrWhiteSpace(w))
+            .Select(w => w.Trim())
+            .Distinct()
+            .OrderBy(x => R.Next())
+            .Take(count);
+
+        RandomTags = string.Join(", ", shuffled);
+    }
+
+    public class InterrogateRequest
+    {
+        public string image { get; set; } = "";
+        public string model { get; set; } = "clip";
+    }
+
+    public class InterrogateResponse
+    {
+        public string caption { get; set; } = "";
+    }
+
+    private async Task InterrogateImage(int index, string model = "clip")
+    {
+        if (index < 0 || index >= Media.Count) return;
+
+        try
+        {
+            _captionLoading.Add(index);
+            _captions.Remove(index);
+            await InvokeAsync(StateHasChanged);
+
+            var item = Media[index];
+            var bytes = await Http.GetByteArrayAsync(item.Url);
+            var base64 = Convert.ToBase64String(bytes);
+
+            var req = new InterrogateRequest
+            {
+                image = base64,
+                model = model
+            };
+
+            var resp = await SdHttpClient.PostAsJsonAsync("sdapi/v1/interrogate", req);
+            resp.EnsureSuccessStatusCode();
+
+            var result = await resp.Content.ReadFromJsonAsync<InterrogateResponse>();
+            _captions[index] = result?.caption ?? "(no caption returned)";
+        }
+        catch (Exception ex)
+        {
+            _captions[index] = $"(interrogate failed: {ex.Message})";
+        }
+        finally
+        {
+            _captionLoading.Remove(index);
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    // Resolve a preview image to raw base64 for the general Send menu (Img2Img / Upscale).
+    private async Task<string?> ResolvePreviewBase64(int index)
+    {
+        if (index < 0 || index >= Media.Count) return null;
+        try
+        {
+            var bytes = await Http.GetByteArrayAsync(Media[index].Url);
+            return Convert.ToBase64String(bytes);
+        }
+        catch { return null; }
+    }
+
+    private async Task DownloadAllAsZip()
+    {
+        if (!Media.Any()) return;
+
+        try
+        {
+            _isZipping = true;
+            await InvokeAsync(StateHasChanged);
+
+            var filesList = new List<(string, string)>();
+            foreach (var item in Media)
+            {
+                if (item.Kind == "image" || item.Kind == "video")
+                {
+                    try
+                    {
+                        var bytes = await Http.GetByteArrayAsync(item.Url);
+                        filesList.Add((item.FileName, Convert.ToBase64String(bytes)));
+                    }
+                    catch { }
+                }
+            }
+
+            if (filesList.Any())
+            {
+                var zipName = $"LoRA_{Lora?.name ?? "Preview"}_{DateTime.Now:yyyyMMdd_HHmmss}.zip";
+                await JS.InvokeVoidAsync("downloadUrl", GalleryServer.BuildZipDownload(filesList), zipName);
+            }
+        }
+        finally
+        {
+            _isZipping = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+}
+
+
+
+<style>
+    .lora-html {
+        width: 100%;
+        height: 50vh;
+        border: 0;
+        border-radius: 8px;
+        background: #1e1e1e;
+    }
+
+    .mud-tab-panel {
+        height: 100%;
+    }
+
+    /* Force the Tabs component to fill the Grid Item */
+    .full-height-tabs {
+        height: 100%;
+    }
+
+        /* Force the content area of the tabs to grow and fill the bottom */
+        .full-height-tabs .mud-tabs-panels {
+            flex-grow: 1;
+            height: 100%;
+        }
+
+    /* Ensure the specific panel content takes up the space */
+    .full-height-panel {
+        height: 100%;
+        min-height: 50vh; /* This prevents the dialog from "jumping" when switching tabs */
+    }
+
+    /* No auto-capitalized text for the panels */
+    .full-height-tabs .mud-tab {
+        text-transform: none !important;
+    }
+
+    .gallery-img {
+        width: 100%;
+        height: auto;
+        object-fit: contain;
+        display: block;
+    }
+
+    .gallery-lock {
+        overflow-anchor: none;
+        min-height: 0px;
+        content-visibility: auto;
+    }
+
+    .gallery-lock.nsfw-on img,
+    .gallery-lock.nsfw-on video {
+        filter: blur(28px);
+        transition: filter 0.15s ease;
+    }
+    html.nsfw-hover .gallery-lock.nsfw-on:hover img,
+    html.nsfw-hover .gallery-lock.nsfw-on:hover video {
+        filter: none;
+    }
+
+    .gallery-carousel .mud-carousel-button-prev,
+    .gallery-carousel .mud-carousel-button-next {
+        background-color: rgba(0, 0, 0, 0.4) !important;
+        color: white !important;
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+    }
+    .gallery-carousel .mud-carousel-button-prev:hover,
+    .gallery-carousel .mud-carousel-button-next:hover {
+        background-color: rgba(0, 0, 0, 0.7) !important;
+    }
+</style>

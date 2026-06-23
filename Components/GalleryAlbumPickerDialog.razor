@@ -1,0 +1,34 @@
+@* Pick a destination album (or the gallery root). Returns the album name, or null for Unsorted. *@
+<MudDialog>
+    <DialogContent>
+        <div class="d-flex flex-column gap-1" style="min-width: 280px;">
+            @if (AllowUnsorted)
+            {
+                <MudButton StartIcon="@Icons.Material.Filled.Inbox" OnClick="@(() => Pick(null))"
+                           FullWidth="true" Class="justify-start" Style="text-transform:none;">
+                    Unsorted (gallery root)
+                </MudButton>
+            }
+            @foreach (var a in Albums)
+            {
+                var album = a;
+                <MudButton StartIcon="@Icons.Material.Filled.Folder" OnClick="@(() => Pick(album))"
+                           FullWidth="true" Class="justify-start" Style="text-transform:none;">
+                    @album
+                </MudButton>
+            }
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public List<string> Albums { get; set; } = new();
+    [Parameter] public bool AllowUnsorted { get; set; } = true;
+
+    private void Pick(string? album) => MudDialog.Close(DialogResult.Ok(album));
+    private void Cancel() => MudDialog.Cancel();
+}

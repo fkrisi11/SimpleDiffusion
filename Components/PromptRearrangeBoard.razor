@@ -1,0 +1,164 @@
+@inject IDialogService DialogService
+@inject IJSRuntime JS
+
+<div class="pa-2">
+    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="d-block mb-2">
+        Drag a chip onto a slot to move it &mdash; drop inside a group to add it, or onto an outer
+        slot to pull it out. Works with mouse or touch. Use + / - to adjust weight (0&ndash;2.0),
+        double-tap to set an exact weight. Parenthesis groups stay intact.
+    </MudText>
+
+    <CascadingValue Name="RearrangeBoard" Value="this" IsFixed="true">
+        <div @ref="_containerRef" class="d-flex flex-wrap align-center gap-1 pa-3 rearrange-container">
+            @if (_root.Children.Any())
+            {
+                @for (int i = 0; i < _root.Children.Count; i++)
+                {
+                    <PromptDropSlot Parent="_root" Index="i" />
+                    <PromptRearrangeNode Node="_root.Children[i]" />
+                }
+                <PromptDropSlot Parent="_root" Index="_root.Children.Count" />
+            }
+            else
+            {
+                <MudText Typo="Typo.body2" Class="italic pa-2">Enter some tags in the prompt to rearrange them here.</MudText>
+            }
+        </div>
+    </CascadingValue>
+</div>
+
+<style>
+    .rearrange-container {
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        max-height: 300px;
+        overflow-y: auto;
+    }
+
+    .rearrange-chip {
+        display: inline-flex;
+        align-items: center;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 2px 6px;
+        font-size: 0.8rem;
+        user-select: none;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        cursor: grab;
+        touch-action: none; /* let the pointer engine own touch gestures on chips */
+    }
+
+    .rearrange-chip.lora-chip {
+        border-color: rgba(255, 114, 255, 0.3);
+        background: rgba(255, 114, 255, 0.05);
+    }
+
+    .rearrange-group {
+        display: inline-flex;
+        align-items: center;
+        background: rgba(255, 255, 255, 0.015);
+        border: 1px dashed rgba(255, 255, 255, 0.22);
+        border-radius: 14px;
+        padding: 2px 4px;
+        user-select: none;
+        cursor: grab;
+        touch-action: none;
+    }
+
+    .rearrange-group-inner {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 4px;
+    }
+
+    .rearrange-group-label {
+        font-family: monospace;
+        font-weight: 700;
+        color: rgba(255, 255, 255, 0.5);
+        cursor: pointer;
+        padding: 0 2px;
+    }
+
+    .rearrange-text {
+        padding: 0 4px;
+        color: rgba(255, 255, 255, 0.85);
+        word-break: break-all;
+        cursor: pointer;
+    }
+
+    /* A preserved newline: full-width so following chips wrap onto a new row. */
+    .rearrange-linebreak {
+        flex-basis: 100%;
+        height: 1px;
+        background: rgba(255, 255, 255, 0.12);
+        margin: 3px 0;
+    }
+
+    /* The chip currently being dragged. */
+    .drag-source {
+        opacity: 0.35;
+    }
+
+    /* The floating clone that follows the pointer. */
+    .rearrange-ghost {
+        position: fixed;
+        left: 0;
+        top: 0;
+        z-index: 3000;
+        pointer-events: none;
+        opacity: 0.85;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+
+    /* Drop slots: collapsed until a drag is active, then visible insertion targets. */
+    .rearrange-slot {
+        width: 2px;
+        align-self: stretch;
+        min-height: 24px;
+        border-radius: 3px;
+        background: transparent;
+        transition: width 0.08s ease-in-out, background-color 0.08s ease-in-out;
+    }
+
+    .rearrange-container.js-dragging .rearrange-slot {
+        width: 10px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px dashed rgba(255, 255, 255, 0.25);
+    }
+
+    .rearrange-slot.slot-over {
+        width: 16px !important;
+        background: var(--mud-palette-primary) !important;
+        border: none !important;
+    }
+
+    /* Slots whose drop would be a no-op for the item being dragged. */
+    .rearrange-slot.slot-hidden {
+        display: none !important;
+    }
+
+    .rearrange-mod {
+        cursor: pointer;
+        font-weight: 700;
+        font-size: 0.9rem;
+        padding: 0 4px;
+        user-select: none;
+        transition: all 0.1s ease-in-out;
+        line-height: 1;
+    }
+
+    .rearrange-mod.plus {
+        color: #4caf50;
+    }
+
+    .rearrange-mod.minus {
+        color: #ef5350;
+    }
+
+    .rearrange-mod:hover {
+        transform: scale(1.3);
+    }
+</style>

@@ -1,0 +1,90 @@
+@* Manages a list of ControlNet units (add / remove / enable), each edited by a ControlNetPanel.
+   The parent owns the Units list and reads it when building the request's alwayson_scripts. *@
+@inject IDialogService DialogService
+<MudPaper Class="pa-3 mb-3" Elevation="2" Style="background-color: var(--mud-palette-background-grey);">
+    <div class="d-flex justify-space-between align-center mb-1">
+        <MudText Typo="Typo.subtitle1">
+            <MudIcon Icon="@Icons.Material.Filled.Tune" Class="mr-1 mb-n1" />ControlNet
+            @if (ActiveCount > 0)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="ml-1">@ActiveCount active</MudChip>
+            }
+        </MudText>
+        <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddUnit">Add unit</MudButton>
+    </div>
+
+    @if (Units.Count == 0)
+    {
+        <MudText Typo="Typo.caption">
+            Guide generation with a reference image — pose, edges, depth, scribble, tile, inpaint and more.
+            Add a unit to use ControlNet alongside (or instead of) the built-in inpaint/outpaint.
+        </MudText>
+    }
+    else
+    {
+        <MudExpansionPanels MultiExpansion="true">
+            @foreach (var (unit, index) in Units.Select((u, i) => (u, i)))
+            {
+                <MudExpansionPanel Expanded="true">
+                    <TitleContent>
+                        <div class="d-flex align-center justify-space-between" style="width:100%;">
+                            <div class="d-flex align-center gap-2" @onclick:stopPropagation="true">
+                                <MudCheckBox T="bool" Value="unit.Enabled" ValueChanged="@(v => ToggleUnit(unit, v))" Dense="true" Color="Color.Primary" />
+                                <MudText Typo="Typo.body2">
+                                    Unit @(index + 1)
+                                    <MudText Typo="Typo.caption" Class="ml-1" Style="display:inline; opacity:0.7;">@Describe(unit)</MudText>
+                                </MudText>
+                            </div>
+                            <div class="d-flex align-center" @onclick:stopPropagation="true">
+                                <MudIconButton Icon="@Icons.Material.Filled.HelpOutline" Size="Size.Small" Color="Color.Info"
+                                               title="@($"About {unit.ControlType}")" OnClick="@(() => ShowHelp(unit.ControlType))" />
+                                <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                               OnClick="@(() => RemoveUnit(unit))" />
+                            </div>
+                        </div>
+                    </TitleContent>
+                    <ChildContent>
+                        <ControlNetPanel Unit="unit" Http="Http" GetInitImage="GetInitImage" AllowMask="AllowMask" OnChanged="NotifyChanged" />
+                    </ChildContent>
+                </MudExpansionPanel>
+            }
+        </MudExpansionPanels>
+    }
+</MudPaper>
+
+@code {
+    [Parameter] public List<ControlNetUnit> Units { get; set; } = new();
+    [Parameter] public HttpClient Http { get; set; } = default!;
+    [Parameter] public EventCallback OnChanged { get; set; }
+    [Parameter] public Func<string?>? GetInitImage { get; set; }
+    [Parameter] public bool AllowMask { get; set; }
+
+    private int ActiveCount => Units.Count(u => u.IsActive);
+
+    private async Task AddUnit() { Units.Add(new ControlNetUnit()); await NotifyChanged(); }
+
+    private async Task RemoveUnit(ControlNetUnit unit) { Units.Remove(unit); await NotifyChanged(); }
+
+    private async Task ToggleUnit(ControlNetUnit unit, bool on) { unit.Enabled = on; await NotifyChanged(); }
+
+    private async Task ShowHelp(string controlType)
+    {
+        await DialogService.ShowMessageBox(new MessageBoxOptions
+        {
+            Title = $"ControlNet — {controlType}",
+            MarkupMessage = new MarkupString(ControlNetHelp.For(controlType)),
+            YesText = "Got it"
+        });
+    }
+
+    private static string Describe(ControlNetUnit u)
+    {
+        var bits = new List<string>();
+        if (u.Module is { Length: > 0 } and not "none") bits.Add(u.Module);
+        if (u.Model is { Length: > 0 } and not "None") bits.Add(u.Model);
+        if (string.IsNullOrEmpty(u.ImageB64)) bits.Add("no image");
+        return bits.Count > 0 ? "— " + string.Join(" · ", bits) : "";
+    }
+
+    private Task NotifyChanged() { StateHasChanged(); return OnChanged.InvokeAsync(); }
+}

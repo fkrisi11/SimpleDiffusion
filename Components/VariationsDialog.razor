@@ -1,0 +1,35 @@
+@namespace SimpleDiffusion.Components
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6"><MudIcon Icon="@Icons.Material.Filled.AutoAwesomeMotion" Class="mr-2 mb-n1" />Make variations</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-4" Style="opacity:0.8;">
+            Keeps this image's prompt and seed, but nudges each result by a fresh variation seed.
+            Lower strength stays closer to the original; higher drifts further.
+        </MudText>
+
+        <MudSlider T="double" @bind-Value="_strength" Min="0.05" Max="0.6" Step="0.05" Color="Color.Primary">
+            Variation strength: @_strength.ToString("0.00")
+        </MudSlider>
+
+        <MudSlider T="int" @bind-Value="_count" Min="1" Max="8" Step="1" Color="Color.Secondary" Class="mt-2">
+            How many: @_count
+        </MudSlider>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.AutoAwesome" OnClick="Confirm">Generate</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    private double _strength = 0.25;
+    private int _count = 4;
+
+    private void Cancel() => MudDialog.Cancel();
+    private void Confirm() => MudDialog.Close(DialogResult.Ok((_strength, _count)));
+}

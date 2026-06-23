@@ -1,0 +1,117 @@
+@using MudBlazor
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Settings" Class="mr-3 mb-n1" />
+            Manage Presets
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (Presets == null || !Presets.Any())
+        {
+            <MudAlert Severity="Severity.Info">No presets saved yet.</MudAlert>
+        }
+        else
+        {
+            <MudList T="GenerationPreset" ReadOnly="true">
+                @for (int i = 0; i < Presets.Count; i++)
+                {
+                    var index = i;
+                    var preset = Presets[i];
+                    <MudListItem>
+                        <div class="d-flex align-center justify-between w-100 gap-2">
+                            <MudText Typo="Typo.body1" Class="flex-grow-1 text-truncate">@preset.Name</MudText>
+                            
+                            <div class="d-flex align-center gap-1">
+                                <MudTooltip Text="Move Up">
+                                    <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small" 
+                                                   Disabled="@(index == 0)" OnClick="@(() => MoveUp(index))" />
+                                </MudTooltip>
+                                <MudTooltip Text="Move Down">
+                                    <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Size="Size.Small" 
+                                                   Disabled="@(index == Presets.Count - 1)" OnClick="@(() => MoveDown(index))" />
+                                </MudTooltip>
+                                <MudTooltip Text="Rename">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small" 
+                                                   OnClick="@(() => RenamePreset(index))" />
+                                </MudTooltip>
+                                <MudTooltip Text="Delete">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" 
+                                                   OnClick="@(() => DeletePreset(index))" />
+                                </MudTooltip>
+                            </div>
+                        </div>
+                    </MudListItem>
+                }
+            </MudList>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Color="Color.Primary" OnClick="Close" Variant="Variant.Filled">Done</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public List<GenerationPreset> Presets { get; set; } = new();
+    [Parameter] public EventCallback OnPresetsUpdated { get; set; }
+
+    [Inject] private IDialogService DialogService { get; set; } = default!;
+
+    private void Close() => MudDialog.Close();
+
+    private async Task MoveUp(int index)
+    {
+        if (index <= 0 || index >= Presets.Count) return;
+        var item = Presets[index];
+        Presets.RemoveAt(index);
+        Presets.Insert(index - 1, item);
+        await OnPresetsUpdated.InvokeAsync(null);
+    }
+
+    private async Task MoveDown(int index)
+    {
+        if (index < 0 || index >= Presets.Count - 1) return;
+        var item = Presets[index];
+        Presets.RemoveAt(index);
+        Presets.Insert(index + 1, item);
+        await OnPresetsUpdated.InvokeAsync(null);
+    }
+
+    private async Task RenamePreset(int index)
+    {
+        if (index < 0 || index >= Presets.Count) return;
+        var preset = Presets[index];
+
+        var parameters = new DialogParameters<SavePresetDialog>();
+        parameters.Add(x => x.PresetName, preset.Name);
+
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<SavePresetDialog>("Rename Preset", parameters, options);
+        var result = await dialog.Result;
+
+        if (result != null && !result.Canceled && result.Data is string newName && !string.IsNullOrWhiteSpace(newName))
+        {
+            preset.Name = newName;
+            await OnPresetsUpdated.InvokeAsync(null);
+        }
+    }
+
+    private async Task DeletePreset(int index)
+    {
+        if (index < 0 || index >= Presets.Count) return;
+        
+        bool? confirm = await DialogService.ShowMessageBox(
+            "Delete Preset", 
+            $"Are you sure you want to delete preset '{Presets[index].Name}'?", 
+            yesText: "Delete", cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            Presets.RemoveAt(index);
+            await OnPresetsUpdated.InvokeAsync(null);
+        }
+    }
+}

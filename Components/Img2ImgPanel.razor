@@ -1,0 +1,784 @@
+@using Microsoft.AspNetCore.Components.Forms
+@using MudBlazor
+@using SimpleDiffusion.Infrastructure
+
+<MudPaper Class="pa-4" Elevation="0" Width="100%" Style="background: transparent;">
+
+    @* Results Gallery (Img2Img) *@
+    <MudPaper Class="pa-0" Elevation="0" Width="100%" Style="background: transparent;">
+
+        @* Header actions *@
+        <div class="d-flex justify-end gap-2 mb-4">
+            @if (_finalImages.Any())
+            {
+                <MudButton Variant="Variant.Filled"
+                           StartIcon="@Icons.Material.Filled.Archive"
+                           Color="Color.Secondary"
+                           OnClick="DownloadAllAsZip">
+                    Download Batch as ZIP
+                </MudButton>
+                <MudButton Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Filled.Delete"
+                           Color="Color.Error"
+                           OnClick="ClearResults">
+                    Clear
+                </MudButton>
+            }
+        </div>
+
+        <MudGrid Spacing="2" Class="gallery-lock">
+            @* Finished Images *@
+            @foreach (var (img, index) in _finalImages.Select((value, i) => (value, i)))
+            {
+                <MudItem xs="12" sm="6" md="4">
+                    <MudPaper Height="400px" Width="100%"
+                              Class="d-flex align-center justify-center overflow-hidden pa-2"
+                              Style="background-color: var(--mud-palette-background-grey); position: relative"
+                              Elevation="4">
+                        <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Default" Class="sd-tile-spinner" />
+                        <MudImage Src="@($"/results/file?id={img}&w={GridThumbWidth}")"
+                                  ObjectFit="ObjectFit.Contain"
+                                  Class="rounded-lg cursor-pointer"
+                                  Style="max-height:100%; max-width:100%;"
+                                  @onclick="@(() => OpenLightbox(index))" />
+                    </MudPaper>
+
+                    <div style="display:flex; gap:8px; margin-top:0.5em">
+                        <MudTooltip Text="Describe image (CLIP)">
+                            <MudIconButton Icon="@Icons.Material.Filled.Psychology"
+                                           Variant="Variant.Filled"
+                                           Color="Color.Primary"
+                                           Size="Size.Small"
+                                           OnClick="@(() => InterrogateImage(index, "clip"))"
+                                           Disabled="@_captionLoading.Contains(index)" />
+                        </MudTooltip>
+
+                        <MudTooltip Text="Tags (DeepDanbooru)">
+                            <MudIconButton Icon="@Icons.Material.Filled.Label"
+                                           Variant="Variant.Filled"
+                                           Color="Color.Secondary"
+                                           Size="Size.Small"
+                                           OnClick="@(() => InterrogateImage(index, "deepdanbooru"))"
+                                           Disabled="@_captionLoading.Contains(index)" />
+                        </MudTooltip>
+
+                        <SendMenu Resolve="@(() => GalleryServer.GetResultBase64Async(img))" />
+
+                        <MudTooltip Text="Read PNG info (generation parameters)">
+                            <MudIconButton Icon="@Icons.Material.Filled.Description"
+                                           Variant="Variant.Filled" Color="Color.Info" Size="Size.Small"
+                                           OnClick="@(() => ReadPngInfo(index))" />
+                        </MudTooltip>
+
+                        @if (_pngPrompts.ContainsKey(index))
+                        {
+                            <MudTooltip Text="Add this image's prompt to the Img2Img fields">
+                                <MudIconButton Icon="@Icons.Material.Filled.PlaylistAdd"
+                                               Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
+                                               OnClick="@(() => AddPngToPrompt(index))" />
+                            </MudTooltip>
+                        }
+
+                        <MudTooltip Text="Save to Gallery">
+                            <MudIconButton Icon="@Icons.Material.Filled.BookmarkAdd"
+                                           Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small"
+                                           OnClick="@(() => SaveToGallery(index))" />
+                        </MudTooltip>
+                    </div>
+
+                    @if (_captionLoading.Count != 0)
+                    {
+                        <MudPaper Class="mt-2 pa-2" Elevation="1" Style="background: rgba(0,0,0,0.06);">
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="ml-2" />
+                        </MudPaper>
+                    }
+
+                    @if (_captions.TryGetValue(index, out var cap))
+                    {
+                        <MudPaper Class="mt-2 pa-2" Elevation="1" Style="background: rgba(0,0,0,0.06);">
+                            <MudText Typo="Typo.caption" Style="white-space: pre-wrap; word-break: break-word;">
+                                @cap
+                            </MudText>
+                        </MudPaper>
+                    }
+                </MudItem>
+            }
+
+            @* Progress / Preview Card — only shown once a real preview is available, so the
+               number of visible tiles never exceeds the number of images being generated. *@
+            @if (_isGenerating && !string.IsNullOrEmpty(_currentPreview))
+            {
+                <MudItem xs="12" sm="6" md="4">
+                    <MudPaper Height="400px" Width="100%"
+                              Class="pa-2 border-2 border-dashed mud-border-primary relative d-flex align-center justify-center"
+                              Style="background: rgba(0,0,0,0.05)">
+                        <MudImage Src="@_currentPreview"
+                                  ObjectFit="ObjectFit.Contain"
+                                  Style="height:100%; width:100%;" />
+
+                        @* Action Buttons Overlay - available while generating, even before a preview *@
+                        <div style="position:absolute; top:10px; right:10px; display:flex; gap:8px;">
+                            <MudTooltip Text="Skip current image">
+                                <MudIconButton Icon="@Icons.Material.Filled.SkipNext"
+                                               Variant="Variant.Filled"
+                                               Color="Color.Warning"
+                                               Size="Size.Small"
+                                               OnClick="Skip" />
+                            </MudTooltip>
+
+                            <MudTooltip Text="Cancel entire generation">
+                                <MudIconButton Icon="@Icons.Material.Filled.Stop"
+                                               Variant="Variant.Filled"
+                                               Color="Color.Error"
+                                               Size="Size.Small"
+                                               OnClick="Interrupt"
+                                               Disabled="_isCancelling" />
+                            </MudTooltip>
+                        </div>
+
+                        <div style="position:absolute; bottom:15px; width:85%; background: rgba(0,0,0,0.5); padding: 8px; border-radius: 4px;">
+                            <MudProgressLinear Color="Color.Primary" Value="_progress" Class="rounded" />
+                            <MudText Typo="Typo.caption" Align="Align.Center" Class="d-block mt-1 white-text">
+                                @(_isCancelling ? "Stopping…" : $"Batch {_finalImages.Count + 1} of {_request.n_iter} ({_progress}%)")
+                            </MudText>
+                        </div>
+                    </MudPaper>
+                </MudItem>
+            }
+
+            @* Skeleton placeholders for the images still queued this run. *@
+            @if (_isGenerating)
+            {
+                @* keep a skeleton for the in-progress image until its live preview appears. *@
+                @for (int s = 0; s < Math.Max(0, _expectedTotal - _finalImages.Count - (string.IsNullOrEmpty(_currentPreview) ? 0 : 1)); s++)
+                {
+                    <MudItem xs="12" sm="6" md="4">
+                        <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="400px" Width="100%"
+                                     Animation="Animation.Wave" Class="rounded-lg" />
+                    </MudItem>
+                }
+            }
+        </MudGrid>
+
+        @* In-progress indicator shown below the gallery before the first preview frame arrives
+           (the preview card takes over once a preview is available). *@
+        @if (_isGenerating && _batchActive && string.IsNullOrEmpty(_currentPreview))
+        {
+            <div class="mt-4">
+                <div class="d-flex align-center justify-space-between mb-1">
+                    <div class="d-flex align-center gap-2">
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Primary" />
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            @(_isCancelling
+                                ? "Stopping… (finishing the current step)"
+                                : "Generating…" + (_progress > 0 ? $" ({_progress}%)" : "") + (_eta > 0 ? $" · ~{_eta:0}s left" : ""))
+                        </MudText>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                                   StartIcon="@Icons.Material.Filled.SkipNext" OnClick="Skip">Skip</MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                                   StartIcon="@Icons.Material.Filled.Stop" OnClick="Interrupt" Disabled="_isCancelling">Cancel</MudButton>
+                    </div>
+                </div>
+                <MudProgressLinear Color="Color.Primary" Indeterminate="@(_progress <= 0)" Value="_progress" Rounded="true" />
+            </div>
+        }
+
+    </MudPaper>
+
+    <div class="mt-4" />
+
+    @* On PC, cap the input form to a centered column so it doesn't stretch edge-to-edge. *@
+    <div class="sd-gen-form">
+
+    @* Generate button (kept above the input image) *@
+    <MudButton OnClick="GenerateImg2Img"
+               Variant="Variant.Filled"
+               Color="Color.Primary"
+               FullWidth="true"
+               Disabled="@(_initImage == null || _isGenerating || ServerOffline)">
+        @(_isGenerating ? "Generating..." : "Generate")
+    </MudButton>
+
+    <div class="mt-4" />
+
+    @* Input Image *@
+    <div class="sd-dropzone" @ref="_dropZone">
+        <MudPaper Class="pa-3 mb-3" Elevation="2"
+                  Style="position:relative; background-color: var(--mud-palette-background-grey);">
+            <MudText Typo="Typo.subtitle1" Class="mb-2">Input Image</MudText>
+
+            @* Centered column: the image on top, the drop/click target under it (was a cramped row). *@
+            <div class="sd-picker-col">
+                @if (_initImage != null)
+                {
+                    <div class="sd-init-preview">
+                        <MudPaper Class="d-flex align-center justify-center overflow-hidden pa-2"
+                                  Style="position:relative; background: rgba(0,0,0,0.06);">
+                            @if (_inpaintMode)
+                            {
+                                @* Plain img + canvas overlay so the mask aligns 1:1 with the image. *@
+                                <div class="sd-mask-wrap">
+                                    <img @ref="_initImgEl" src="@InitDataUrl" class="sd-mask-img" />
+                                    <canvas @ref="_maskCanvas" class="sd-mask-canvas" style="opacity:@MaskOpacityCss;"></canvas>
+                                </div>
+                            }
+                            else
+                            {
+                                <MudImage Src="@InitDataUrl"
+                                          ObjectFit="ObjectFit.Contain"
+                                          Style="max-height:70vh; max-width:100%; display:block;" />
+                            }
+
+                            <div style="position:absolute; top:8px; right:8px; z-index: 3">
+                                <MudTooltip Text="Remove">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                                   Size="Size.Small"
+                                                   Color="Color.Error"
+                                                   Variant="Variant.Filled"
+                                                   OnClick="ClearInitImage" />
+                                </MudTooltip>
+                            </div>
+                        </MudPaper>
+
+                        @* Inpaint toggle + brush/mask controls. *@
+                        <div class="d-flex flex-column gap-1 mt-2">
+                            <MudSwitch T="bool" Value="_inpaintMode" ValueChanged="OnInpaintToggled" Color="Color.Primary"
+                                       Label="Inpaint — paint a mask over the area to regenerate" />
+                            @if (_inpaintMode)
+                            {
+                                <MudTooltip Text="Paint actual colors onto the image to steer the result, instead of a plain regenerate-here mask">
+                                    <MudSwitch T="bool" Value="_sketchMode" ValueChanged="OnSketchToggled" Color="Color.Tertiary"
+                                               Label="Sketch mode — paint colors to guide the result" />
+                                </MudTooltip>
+
+                                <MudSlider T="double" Min="0" Max="1" Step="0.01" @bind-Value="_request.denoising_strength" Color="Color.Primary" Style="max-width:340px;">
+                                    Denoising: @_request.denoising_strength.ToString("0.00")
+                                    <MudText Typo="Typo.caption" Class="ml-1" Style="display:inline; opacity:0.7;">
+                                        @(_sketchMode ? "— sketch needs ~0.7–0.85 to reshape your paint" : "— 0.4–0.6 subtle edits, 0.8–1.0 full redraw")
+                                    </MudText>
+                                </MudSlider>
+
+                                <div class="d-flex align-center gap-2 flex-wrap">
+                                    <MudButtonGroup Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                                        <MudButton StartIcon="@Icons.Material.Filled.Brush" Variant="@(_maskTool == "brush" ? Variant.Filled : Variant.Outlined)" OnClick='@(() => SetMaskTool("brush"))'>Brush</MudButton>
+                                        <MudButton StartIcon="@Icons.Material.Filled.Backspace" Variant="@(_maskTool == "eraser" ? Variant.Filled : Variant.Outlined)" OnClick='@(() => SetMaskTool("eraser"))'>Eraser</MudButton>
+                                        <MudButton StartIcon="@Icons.Material.Filled.PanTool" Variant="@(_maskTool == "cursor" ? Variant.Filled : Variant.Outlined)" OnClick='@(() => SetMaskTool("cursor"))'>Cursor</MudButton>
+                                    </MudButtonGroup>
+                                </div>
+
+                                <div class="d-flex align-center gap-2 flex-wrap mt-1">
+                                    <MudTooltip Text="Undo (Ctrl+Z)">
+                                        <MudIconButton Icon="@Icons.Material.Filled.Undo" Size="Size.Small" Variant="Variant.Outlined" OnClick="MaskUndo" />
+                                    </MudTooltip>
+                                    <MudTooltip Text="Redo (Ctrl+Y / Ctrl+Shift+Z)">
+                                        <MudIconButton Icon="@Icons.Material.Filled.Redo" Size="Size.Small" Variant="Variant.Outlined" OnClick="MaskRedo" />
+                                    </MudTooltip>
+                                    <MudTooltip Text="Clear the active layer">
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Clear" OnClick="ClearMask">Clear layer</MudButton>
+                                    </MudTooltip>
+                                    <MudTooltip Text="@(_sketchMode ? "Preview the colour composite that will be sent (fullscreen)" : "Preview the finished merged mask (fullscreen)")">
+                                        <MudIconButton Icon="@Icons.Material.Filled.Preview" Size="Size.Small" Variant="Variant.Outlined" OnClick="PreviewMask" />
+                                    </MudTooltip>
+                                </div>
+
+                                <div class="d-flex align-center gap-3 flex-wrap mt-1">
+                                    <MudTooltip Text="Hold Alt and scroll over the image to resize the brush">
+                                        <MudSlider T="int" Min="5" Max="200" Step="5" Value="_brushSize" ValueChanged="OnBrushChanged" Style="width:160px;">Brush: @_brushSize</MudSlider>
+                                    </MudTooltip>
+                                    <div class="d-flex align-center gap-2">
+                                        <MudText Typo="Typo.body2">@(_sketchMode ? "Paint color" : "Brush color")</MudText>
+                                        <input type="color" value="@_brushColorHex" @onchange="OnBrushColorInput"
+                                               title="Brush color" class="sd-brush-color" />
+                                    </div>
+                                    @if (!_sketchMode)
+                                    {
+                                        <MudSlider T="double" Min="0.1" Max="1.0" Step="0.05" Value="_maskOpacity" ValueChanged="OnMaskOpacityChanged" Style="width:160px;">Overlay: @(((int)(_maskOpacity * 100)))%</MudSlider>
+                                    }
+                                </div>
+
+                                @* Mask layers — paint on the active layer; reorder/colour matter in Sketch, organize in Inpaint. *@
+                                <MudPaper Outlined="true" Class="pa-2 mt-1">
+                                    <div class="d-flex align-center justify-space-between mb-1">
+                                        <MudText Typo="Typo.subtitle2">Layers</MudText>
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" OnClick="AddLayer">Add layer</MudButton>
+                                    </div>
+
+                                    <div class="d-flex align-center gap-1 flex-wrap mb-1">
+                                        <label class="sd-mask-import">
+                                            <MudIcon Icon="@Icons.Material.Filled.Upload" Size="Size.Small" />
+                                            <span>Upload masks</span>
+                                            <InputFile OnChange="OnMaskUpload" accept="image/*" multiple style="display:none" />
+                                        </label>
+                                        <MudTooltip Text="Build a mask layer from the input image's transparency">
+                                            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Layers" OnClick="MaskFromAlpha">From alpha</MudButton>
+                                        </MudTooltip>
+                                        <MudTooltip Text="Download the finished mask as a PNG">
+                                            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Download" OnClick="DownloadMask">Download mask</MudButton>
+                                        </MudTooltip>
+                                        <MudTooltip Text="Flip the active layer's mask (painted ↔ unpainted)">
+                                            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.InvertColors" OnClick="InvertActiveLayer">Invert layer</MudButton>
+                                        </MudTooltip>
+                                    </div>
+                                    @* Top of the list = top of the stack (drawn last). *@
+                                    @foreach (var layer in ((IEnumerable<MaskLayerInfo>)_maskLayers).Reverse())
+                                    {
+                                        <div class="d-flex align-center gap-1" style="@(_activeLayerId == layer.Id ? "outline:1px solid var(--mud-palette-primary); border-radius:4px;" : "")">
+                                            <MudTooltip Text="Paint on this layer">
+                                                <MudIconButton Icon="@(_activeLayerId == layer.Id ? Icons.Material.Filled.RadioButtonChecked : Icons.Material.Filled.RadioButtonUnchecked)"
+                                                               Size="Size.Small" Color="@(_activeLayerId == layer.Id ? Color.Primary : Color.Default)"
+                                                               OnClick="@(() => SetActiveLayer(layer.Id))" />
+                                            </MudTooltip>
+                                            <MudTooltip Text="Show / hide">
+                                                <MudCheckBox T="bool" Value="layer.Visible" ValueChanged="@(v => ToggleLayerVisible(layer.Id, v))" Dense="true" />
+                                            </MudTooltip>
+                                            <input type="color" value="@layer.Color" @onchange="@(e => SetLayerColor(layer.Id, e.Value?.ToString() ?? layer.Color))"
+                                                   title="Layer colour" class="sd-brush-color" style="width:30px; height:26px;" />
+                                            <MudTextField T="string" Value="layer.Name" ValueChanged="@(n => RenameLayer(layer.Id, n))" Margin="Margin.Dense" Variant="Variant.Text" Class="flex-grow-1" />
+                                            <MudTooltip Text="Move up">
+                                                <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small" OnClick="@(() => MoveLayer(layer.Id, 1))" />
+                                            </MudTooltip>
+                                            <MudTooltip Text="Move down">
+                                                <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Size="Size.Small" OnClick="@(() => MoveLayer(layer.Id, -1))" />
+                                            </MudTooltip>
+                                            <MudTooltip Text="Delete layer">
+                                                <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                                               Disabled="@(_maskLayers.Count <= 1)" OnClick="@(() => DeleteLayer(layer.Id))" />
+                                            </MudTooltip>
+                                        </div>
+                                    }
+                                </MudPaper>
+
+                                <div class="d-flex align-center gap-3 flex-wrap mt-1">
+                                    <MudSelect T="int" @bind-Value="_inpaintFill" Label="Masked content" Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined" Style="min-width:240px;">
+                                        <MudSelectItem T="int" Value="0">fill — blend from surroundings@(FillRec(0))</MudSelectItem>
+                                        <MudSelectItem T="int" Value="1">original — keep / seed content@(FillRec(1))</MudSelectItem>
+                                        <MudSelectItem T="int" Value="2">latent noise — invent new (high denoise)@(FillRec(2))</MudSelectItem>
+                                        <MudSelectItem T="int" Value="3">latent nothing — advanced@(FillRec(3))</MudSelectItem>
+                                    </MudSelect>
+                                    <MudSlider T="int" Min="0" Max="64" Step="1" @bind-Value="_maskBlur" Style="width:150px;">Mask blur: @_maskBlur</MudSlider>
+                                    <MudCheckBox T="bool" Value="_onlyMasked" ValueChanged="OnOnlyMaskedChanged" Label="Only masked" Dense="true" />
+                                    <MudTooltip Text="Turn on if the wrong area regenerates (the background instead of what you painted)">
+                                        <MudCheckBox T="bool" @bind-Value="_invertMask" Label="Invert mask" Dense="true" />
+                                    </MudTooltip>
+                                </div>
+
+                                @if (_onlyMasked)
+                                {
+                                    <div class="d-flex align-center gap-3 flex-wrap mt-1">
+                                        <MudTooltip Text="How much surrounding image to include in the crop that 'Only masked' scales up — more context vs more detail">
+                                            <MudSlider T="int" Min="0" Max="256" Step="4" Value="_inpaintPadding" ValueChanged="OnPaddingChanged" Style="width:220px;">Only-masked padding: @_inpaintPadding px</MudSlider>
+                                        </MudTooltip>
+                                        <MudTooltip Text="Outline the region that will be regenerated on the image">
+                                            <MudSwitch T="bool" Value="_showPadding" ValueChanged="OnShowPaddingChanged" Color="Color.Info" Label="Show on image" />
+                                        </MudTooltip>
+                                    </div>
+                                }
+                            }
+
+                            <MudSwitch T="bool" Value="_outpaintMode" ValueChanged="OnOutpaintToggled" Color="Color.Primary"
+                                       Label="Outpaint — extend the image outward into new space" Class="mt-1" />
+                            @if (_outpaintMode)
+                            {
+                                <div class="d-flex align-center gap-3 flex-wrap mt-1">
+                                    <MudSlider T="int" Min="8" Max="512" Step="8" @bind-Value="_outpaintPixels" Style="width:200px;">Expand by: @_outpaintPixels px</MudSlider>
+                                    <div class="d-flex align-center gap-1">
+                                        <MudButton Size="Size.Small" DropShadow="false"
+                                                   Variant="@(_outLeft ? Variant.Filled : Variant.Outlined)" Color="@(_outLeft ? Color.Primary : Color.Default)"
+                                                   StartIcon="@Icons.Material.Filled.West" OnClick="@(() => _outLeft = !_outLeft)">Left</MudButton>
+                                        <MudButton Size="Size.Small" DropShadow="false"
+                                                   Variant="@(_outUp ? Variant.Filled : Variant.Outlined)" Color="@(_outUp ? Color.Primary : Color.Default)"
+                                                   StartIcon="@Icons.Material.Filled.North" OnClick="@(() => _outUp = !_outUp)">Up</MudButton>
+                                        <MudButton Size="Size.Small" DropShadow="false"
+                                                   Variant="@(_outDown ? Variant.Filled : Variant.Outlined)" Color="@(_outDown ? Color.Primary : Color.Default)"
+                                                   StartIcon="@Icons.Material.Filled.South" OnClick="@(() => _outDown = !_outDown)">Down</MudButton>
+                                        <MudButton Size="Size.Small" DropShadow="false"
+                                                   Variant="@(_outRight ? Variant.Filled : Variant.Outlined)" Color="@(_outRight ? Color.Primary : Color.Default)"
+                                                   StartIcon="@Icons.Material.Filled.East" OnClick="@(() => _outRight = !_outRight)">Right</MudButton>
+                                    </div>
+                                </div>
+                                <div class="d-flex align-center gap-3 flex-wrap mt-1">
+                                    <MudSelect T="int" @bind-Value="_outpaintFill" Label="Border fill" Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined" Style="min-width:240px;">
+                                        <MudSelectItem T="int" Value="2">latent noise — invent new  ✓ recommended</MudSelectItem>
+                                        <MudSelectItem T="int" Value="1">original — continue the edges</MudSelectItem>
+                                        <MudSelectItem T="int" Value="0">fill — match the edges</MudSelectItem>
+                                        <MudSelectItem T="int" Value="3">latent nothing — advanced</MudSelectItem>
+                                    </MudSelect>
+                                    <MudSlider T="int" Min="0" Max="64" Step="1" @bind-Value="_maskBlur" Style="width:150px;">Mask blur: @_maskBlur</MudSlider>
+                                </div>
+                                <MudSlider T="double" Min="0" Max="1" Step="0.01" @bind-Value="_request.denoising_strength" Color="Color.Primary" Style="max-width:340px;">
+                                    Denoising: @_request.denoising_strength.ToString("0.00")
+                                    <MudText Typo="Typo.caption" Class="ml-1" Style="display:inline; opacity:0.7;">— outpaint needs ~0.8–1.0</MudText>
+                                </MudSlider>
+                                <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mt-1">
+                                    @OutpaintSummary
+                                </MudAlert>
+                                <MudText Typo="Typo.caption" Class="mt-1">The border now continues your image's edges, so <b>latent noise</b> or <b>original</b> fill both work — pair with high denoising. The Resize settings are ignored while outpainting (size shown above).</MudText>
+                            }
+                        </div>
+
+                        <MudText Typo="Typo.caption" Class="mt-2" Style="text-align:center;">
+                            @($"{_initImage.Width}×{_initImage.Height} • {_initImage.MimeType}")
+                        </MudText>
+
+                        @* Interrogate buttons (CLIP + DeepDanbooru) *@
+                        <div class="d-flex justify-center" style="gap:8px; margin-top:0.5em">
+                            <MudTooltip Text="Describe image (CLIP)">
+                                <MudIconButton Icon="@Icons.Material.Filled.Psychology"
+                                               Variant="Variant.Filled"
+                                               Color="Color.Primary"
+                                               Size="Size.Small"
+                                               OnClick="@(() => InterrogateInitImage("clip"))"
+                                               Disabled="@_initCaptionLoading"
+                                               Style="z-index:2" />
+                            </MudTooltip>
+
+                            <MudTooltip Text="Tags (DeepDanbooru)">
+                                <MudIconButton Icon="@Icons.Material.Filled.Label"
+                                               Variant="Variant.Filled"
+                                               Color="Color.Secondary"
+                                               Size="Size.Small"
+                                               OnClick="@(() => InterrogateInitImage("deepdanbooru"))"
+                                               Disabled="@_initCaptionLoading"
+                                               Style="z-index:2" />
+                            </MudTooltip>
+
+                            <MudTooltip Text="Read PNG info (generation parameters)">
+                                <MudIconButton Icon="@Icons.Material.Filled.Description"
+                                               Variant="Variant.Filled" Color="Color.Info" Size="Size.Small"
+                                               OnClick="ReadInitPngInfo" Style="z-index:2" />
+                            </MudTooltip>
+
+                            @if (_initPng is not null)
+                            {
+                                <MudTooltip Text="Add this image's prompt to the Img2Img fields">
+                                    <MudIconButton Icon="@Icons.Material.Filled.PlaylistAdd"
+                                                   Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
+                                                   OnClick="AddInitPngToPrompt" Style="z-index:2" />
+                                </MudTooltip>
+                            }
+                        </div>
+                    </div>
+                }
+
+                @* The file input covers this square only (drag-drop + click). *@
+                <div class="sd-drop-square">
+                    <InputFile OnChange="OnFileSelected"
+                               accept="image/*"
+                               class="sd-file-input-cover" />
+
+                    <div class="sd-drop-square-content">
+                        <MudIcon Icon="@Icons.Material.Filled.Add" Size="Size.Large" />
+                        <MudText Typo="Typo.caption">Drop here or Click to browse</MudText>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                @if (_initCaptionLoading)
+                {
+                    <MudPaper Class="mt-2 pa-2" Elevation="1" Style="background: rgba(0,0,0,0.06);">
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="ml-2" />
+                    </MudPaper>
+                }
+
+                @if (!string.IsNullOrWhiteSpace(_initCaption))
+                {
+                    <MudPaper Class="mt-2 pa-2" Elevation="1" Style="background: rgba(0,0,0,0.06);">
+                        <MudText Typo="Typo.caption" Style="white-space: pre-wrap; word-break: break-word;">
+                            @_initCaption
+                        </MudText>
+                    </MudPaper>
+                }
+            </div>
+        </MudPaper>
+    </div>
+
+    <div class="mt-4" />
+
+    @* ControlNet — image conditioning, usable alongside or instead of the inpaint/outpaint above. *@
+    <ControlNetSection Units="_cnUnits" Http="_httpClient" GetInitImage="@(() => _initImage?.Base64)" AllowMask="true" />
+
+    <div class="mt-4" />
+
+    <PromptField Label="Prompt" @bind-Value="_request.prompt" _tagService="_tagService" EnableFavorites="_enableFavorites" UseRibbon="@(_enableSuggestionRibbon && _isMobile)" />
+
+    <div class="mt-3" />
+    <PromptField Label="Negative Prompt" @bind-Value="_request.negative_prompt" _tagService="_tagService" EnableFavorites="_enableFavorites" UseRibbon="@(_enableSuggestionRibbon && _isMobile)" />
+
+    @if (_enableQuickTags)
+    {
+        <SimpleDiffusion.Components.PromptToolsPanel Prompt="@_request.prompt"
+                                                    OnPromptChanged="@(p => { _request.prompt = p; StateHasChanged(); })"
+                                                    _tagService="_tagService"
+                                                    EnableFavorites="_enableFavorites"
+                                                    EnableFrequency="_enableFrequency" />
+    }
+
+    <div class="mt-4" />
+
+    @* Settings *@
+    <MudGrid Spacing="2">
+        <MudItem xs="12" md="6">
+            <MudSelect T="int" Label="Resize Mode" Variant="Variant.Filled" @bind-Value="_request.resize_mode">
+                <MudSelectItem Value="0">Just resize</MudSelectItem>
+                <MudSelectItem Value="1">Crop and resize</MudSelectItem>
+                <MudSelectItem Value="2">Resize and fill</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+
+        @* Row 1: Samplers *@
+        <MudGrid Class="mb-4">
+            <MudItem xs="6">
+                <MudSelect T="string" Label="Sampling method" @bind-Value="_request.sampler_name" Variant="Variant.Outlined">
+                    @foreach (var sampler in Samplers)
+                    {
+                        <MudSelectItem Value="@sampler.Name">@sampler.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6">
+                <MudSelect T="string" Label="Schedule type" @bind-Value="_request.scheduler" Variant="Variant.Outlined">
+                    @foreach (var s in Schedulers)
+                    {
+                        <MudSelectItem Value="@s.name">@s.label</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12">
+                <MudSlider @bind-Value="_request.steps" Min="1" Max="150" Step="1" Color="Color.Primary">
+                    Sampling Steps: @_request.steps
+                </MudSlider>
+            </MudItem>
+        </MudGrid>
+
+        @* Resize To / Resize By *@
+        <MudItem xs="12">
+            <MudPaper Class="pa-3 mb-3" Elevation="2">
+                        <MudRadioGroup T="ResizeChoice" @bind-Value="_resizeChoice" Class="d-flex flex-row gap-4">
+                            <MudRadio T="ResizeChoice" Value="ResizeChoice.ResizeTo">Resize To</MudRadio>
+                            <MudRadio T="ResizeChoice" Value="ResizeChoice.ResizeBy">Resize By</MudRadio>
+                        </MudRadioGroup>
+
+                    @if (_resizeChoice == ResizeChoice.ResizeTo)
+                    {
+                    <MudGrid Style="align-items:center;">
+                        @* Dimensions *@
+                        <MudItem xs="10" sm="4">
+                            <MudNumericField T="int" Value="_request.width" ValueChanged="OnWidthChanged" Label="Width" Step="64" Min="64" Variant="Variant.Outlined" Class="mb-2" />
+                            <MudNumericField T="int" Value="_request.height" ValueChanged="OnHeightChanged" Label="Height" Step="64" Min="64" Variant="Variant.Outlined" />
+                        </MudItem>
+
+                        @* Swap Button *@
+                        <MudItem xs="2" sm="1" Class="d-flex align-center justify-center">
+                            <MudIconButton Icon="@Icons.Material.Filled.SwapVert" Variant="Variant.Outlined" OnClick="SwapWH" />
+                        </MudItem>
+
+                        <MudItem xs="12" sm="7" Class="d-flex align-center gap-3 flex-wrap">
+                            <MudTooltip Text="Set width &amp; height to the loaded image's size">
+                                <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AspectRatio"
+                                           OnClick="MatchImageResolution" Disabled="@(_initImage == null)">Match image</MudButton>
+                            </MudTooltip>
+                            <MudTooltip Text="Adjust the other dimension automatically to keep the ratio">
+                                <MudCheckBox T="bool" Value="_lockAspect" ValueChanged="OnLockAspectChanged" Dense="true" Label="Lock aspect ratio" />
+                            </MudTooltip>
+                        </MudItem>
+                    </MudGrid>
+                    }
+                    else
+                    {
+                        <MudItem xs="12" md="6">
+                            <MudSlider @bind-Value="_resizeByScale" Min="0.25" Max="4.0" Step="0.05" Color="Color.Primary">
+                                @code
+                                {
+                                    string resizeText = "";
+                                }
+
+                                @if (_initImage != null)
+                                {
+                            resizeText = $"Resize multiplier: {_resizeByScale.ToString("0.##")} ({_initImage.Width} x {_initImage.Height} -> {RoundTo64(_initImage.Width * _resizeByScale)} x {RoundTo64(_initImage.Height * _resizeByScale)})";
+                                }
+                                else
+                                {
+                                    resizeText = $"Resize multiplier: {_resizeByScale.ToString("0.##")}";
+                                }
+
+                                @resizeText
+                            </MudSlider>
+                        </MudItem>
+                    }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12">
+            <MudPaper Class="pa-3 mb-3" Elevation="2">
+                <MudSlider @bind-Value="_request.cfg_scale" Min="1" Max="30" Step="0.5" Color="Color.Primary">
+                    CFG Scale: @_request.cfg_scale
+                </MudSlider>
+
+                <MudSlider @bind-Value="_request.cfg_rescale" Min="0.0" Max="1.5" Step="0.05" Color="Color.Secondary">
+                    CFG Rescale: @_request.cfg_rescale
+                </MudSlider>
+
+                <MudSlider @bind-Value="_request.denoising_strength" Min="0" Max="1" Step="0.01" Color="Color.Primary">
+                    Denoising Strength: @_request.denoising_strength
+                </MudSlider>
+            </MudPaper>
+        </MudItem>
+
+        @* Seed *@
+        <MudItem xs="12" sm="5">
+            <div class="d-flex align-center gap-1">
+                <MudNumericField T="long" Value="_request.seed" ValueChanged="@(v => _request.seed = v)"
+                                 Label="@($"Seed (-1 = random, max {Txt2ImgRequest.SeedMax:N0})")"
+                                 Min="-1" Max="Txt2ImgRequest.SeedMax"
+                                 HideSpinButtons="true" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1" />
+                <MudTooltip Text="@($"Roll a random seed (0–{Txt2ImgRequest.SeedMax:N0})")">
+                    <MudIconButton Icon="@Icons.Material.Filled.Casino" Variant="Variant.Outlined" OnClick="RandomizeSeed" />
+                </MudTooltip>
+            </div>
+        </MudItem>
+
+        @* Batching & Total *@
+        <MudItem xs="12" sm="7">
+            <MudSlider @bind-Value="_request.n_iter" Min="1" Max="100" Color="Color.Primary">Batch Count: @_request.n_iter</MudSlider>
+            <MudSlider @bind-Value="_request.batch_size" Min="1" Max="8" Color="Color.Secondary">Batch Size: @_request.batch_size</MudSlider>
+
+            <MudAlert Severity="Severity.Info" Dense="true" Class="mt-2" Variant="Variant.Outlined">
+                Total Images: <b>@(_request.n_iter* _request.batch_size)</b>
+            </MudAlert>
+        </MudItem>
+
+        @* Refiner Section *@
+        <MudItem xs="12">
+            <RefinerPanel @bind-Enabled="_request.enable_refiner"
+                          @bind-Checkpoint="_request.refiner_checkpoint"
+                          @bind-SwitchAt="_request.refiner_switch_at"
+                          Models="Models" />
+        </MudItem>
+
+    </MudGrid>
+
+    </div>
+
+</MudPaper>
+@code {
+    [Parameter] public List<SdModel> Models { get; set; } = new();
+}
+
+<style>
+    /* Keep the generation form a readable centered column on wide screens. */
+    .sd-gen-form {
+        max-width: 900px;
+        margin-inline: auto;
+    }
+
+    .sd-dropzone {
+        position: relative;
+    }
+
+    /* Centered column: image preview on top, drop/click target under it. */
+    .sd-picker-col {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .sd-init-preview {
+        width: 100%;
+    }
+
+    /* Inpaint mask painter: the canvas overlays the image exactly; white strokes are shown
+       translucently (the exported mask is fully opaque). */
+    .sd-mask-wrap {
+        position: relative;
+        display: inline-block;
+        line-height: 0;
+        max-height: 70vh;
+    }
+
+        .sd-mask-wrap .sd-mask-img {
+            display: block;
+            max-height: 70vh;
+            max-width: 100%;
+        }
+
+        .sd-mask-wrap .sd-mask-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0.5;
+            cursor: crosshair;
+            touch-action: none; /* let us paint on touch without scrolling */
+        }
+
+    /* The small dotted square */
+    .sd-drop-square {
+        position: relative;
+        width: 96px;
+        height: 96px;
+        overflow: hidden; /* keeps the invisible input clipped */
+    }
+
+    /* Center icon/text inside square */
+    .sd-drop-square-content {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        pointer-events: none; /* so clicks go to the InputFile overlay */
+    }
+
+    /* Your existing invisible overlay input - now only covers the square */
+    .sd-file-input-cover {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        cursor: pointer;
+        z-index: 1;
+    }
+
+    /* Keep your existing hover style, but visually apply it to the square */
+    .sd-dropzone.sd-drop-hover .sd-drop-square {
+        outline: 2px dashed var(--mud-palette-primary);
+        outline-offset: 6px;
+    }
+
+    .gallery-lock {
+        overflow-anchor: none;
+        min-height: 0px;
+        content-visibility: auto;
+    }
+
+    /* Label-styled file picker for importing a mask image as a layer. */
+    .sd-mask-import {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        border: 1px solid var(--mud-palette-lines-default);
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.75rem;
+        white-space: nowrap;
+    }
+
+    /* Compact swatch for the inpaint brush color (native picker — no popover to clip). */
+    .sd-brush-color {
+        width: 40px;
+        height: 32px;
+        padding: 0;
+        border: 1px solid var(--mud-palette-lines-default);
+        border-radius: 6px;
+        background: none;
+        cursor: pointer;
+    }
+</style>

@@ -1,0 +1,56 @@
+@namespace SimpleDiffusion.Components
+@inject SimpleDiffusion.Components.Services.CrossTab CrossTab
+
+@* General "Send" control: routes an image either to the Img2Img tab or the Upscale tab.
+   Provide Base64 directly, or a Resolve callback for sources that need async conversion
+   (e.g. a URL in the fullscreen viewer). *@
+<MudMenu AnchorOrigin="Origin.BottomCenter" TransformOrigin="Origin.TopCenter" Dense="true">
+    <ActivatorContent>
+        <MudTooltip Text="Send to…">
+            <MudIconButton Icon="@Icons.Material.Filled.Send"
+                           Variant="@Variant" Color="@Color" Size="@Size" Class="@Class" />
+        </MudTooltip>
+    </ActivatorContent>
+    <ChildContent>
+        <MudMenuItem Icon="@Icons.Material.Filled.Image" OnClick="@(() => Send(false))">To Img2Img</MudMenuItem>
+        <MudMenuItem Icon="@Icons.Material.Filled.PhotoSizeSelectLarge" OnClick="@(() => Send(true))">To Upscale</MudMenuItem>
+        <MudMenuItem Icon="@Icons.Material.Filled.Tune" OnClick="SendToControlNet">To ControlNet</MudMenuItem>
+    </ChildContent>
+</MudMenu>
+
+@code {
+    /// <summary>Raw base64 image, when it's already available.</summary>
+    [Parameter] public string? Base64 { get; set; }
+
+    /// <summary>Async resolver for the base64 image (used when the source is a URL/data-URL).</summary>
+    [Parameter] public Func<Task<string?>>? Resolve { get; set; }
+
+    /// <summary>Invoked after a successful send (e.g. to close the fullscreen viewer).</summary>
+    [Parameter] public EventCallback OnSent { get; set; }
+
+    [Parameter] public Variant Variant { get; set; } = Variant.Filled;
+    [Parameter] public Color Color { get; set; } = Color.Primary;
+    [Parameter] public Size Size { get; set; } = Size.Small;
+    [Parameter] public string? Class { get; set; }
+
+    private async Task Send(bool toUpscale)
+    {
+        var b64 = Resolve is not null ? await Resolve() : Base64;
+        if (string.IsNullOrEmpty(b64)) return;
+
+        if (toUpscale) CrossTab.RequestSendToUpscale(b64);
+        else CrossTab.RequestSendToImg2Img(b64);
+
+        if (OnSent.HasDelegate) await OnSent.InvokeAsync();
+    }
+
+    private async Task SendToControlNet()
+    {
+        var b64 = Resolve is not null ? await Resolve() : Base64;
+        if (string.IsNullOrEmpty(b64)) return;
+
+        CrossTab.RequestSendToControlNet(b64);
+
+        if (OnSent.HasDelegate) await OnSent.InvokeAsync();
+    }
+}

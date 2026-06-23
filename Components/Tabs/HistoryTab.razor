@@ -1,0 +1,237 @@
+@inject HistoryService History
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+@inject HttpClient Http
+@implements IDisposable
+
+<MudPaper Class="pa-4" Elevation="0" Style="background: transparent;">
+    <div class="d-flex align-center justify-space-between flex-wrap gap-2 mb-3">
+        <div>
+            <MudText Typo="Typo.h6"><MudIcon Icon="@Icons.Material.Filled.History" Class="mr-2 mb-n1" />Generation history</MudText>
+            <MudText Typo="Typo.caption" Style="opacity:0.7;">
+                This device, this session. Settings are always kept; images stay until the app restarts or the cache fills.
+            </MudText>
+        </div>
+        @if (History.Entries.Count > 0)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                       StartIcon="@Icons.Material.Filled.DeleteSweep" OnClick="ClearAll">Clear history</MudButton>
+        }
+    </div>
+
+    @if (!History.Loaded)
+    {
+        <MudProgressCircular Indeterminate="true" />
+    }
+    else if (History.Entries.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+            No generations recorded yet. As you generate, they'll appear here so you can recover them after a refresh.
+        </MudAlert>
+    }
+    else
+    {
+        <MudVirtualize Items="@History.Entries.ToList()" Context="entry" OverscanCount="2">
+            @{
+                var available = entry.ResultIds.Where(GalleryServer.ResultExists).ToList();
+                // All this entry's still-cached images (results, then source, then mask) — one combined
+                // list so the fullscreen viewer can switch between them.
+                var viewer = EntryViewerUrls(entry);
+            }
+            <MudPaper Class="pa-3 mb-3" Outlined="true">
+                <div class="d-flex flex-wrap gap-3">
+                    @* Result thumbnails (cached) or a per-image "Image expired". For a masked img2img
+                       run, the source image and the mask used are shown after the results — all open in
+                       the same fullscreen viewer. *@
+                    <div class="d-flex flex-wrap gap-2 align-end" style="flex:0 0 auto;">
+                        @foreach (var id in entry.ResultIds)
+                        {
+                            var url = $"/results/file?id={id}";
+                            var vi = viewer.IndexOf(url);   // -1 when this image has expired from the cache
+                            if (vi >= 0)
+                            {
+                                <MudImage Src="@($"{url}&w=256")" ObjectFit="ObjectFit.Cover"
+                                          Class="rounded cursor-pointer" Style="width:96px; height:96px;"
+                                          @onclick="@(() => ImageLightbox.ShowAsync(DialogService, viewer, vi, closeOnBackdropClick: true))" />
+                            }
+                            else
+                            {
+                                <div class="hist-expired"><MudIcon Icon="@Icons.Material.Filled.ImageNotSupported" /> <span>Image expired</span></div>
+                            }
+                        }
+                        @LabeledThumb(entry.SourceId, "Source", viewer)
+                        @foreach (var m in entry.Masks)
+                        {
+                            @LabeledThumb(m.Id, m.Label, viewer)
+                        }
+                    </div>
+
+                    @* Metadata + actions. *@
+                    <div style="flex:1 1 240px; min-width:0;">
+                        <div class="d-flex align-center gap-2 mb-1 flex-wrap">
+                            <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled">@entry.Source</MudChip>
+                            <MudText Typo="Typo.caption" Style="opacity:0.7;">@entry.Timestamp.ToString("g")</MudText>
+                        </div>
+                        <MudText Typo="Typo.body2" Style="white-space:pre-wrap; word-break:break-word;">
+                            @(string.IsNullOrWhiteSpace(entry.Prompt) ? "(no prompt)" : entry.Prompt)
+                        </MudText>
+                        @if (!string.IsNullOrWhiteSpace(entry.Negative))
+                        {
+                            <MudText Typo="Typo.caption" Style="opacity:0.7; white-space:pre-wrap; word-break:break-word;">Neg: @entry.Negative</MudText>
+                        }
+                        @* Sampling parameters — not meaningful for upscale entries (Steps == 0), so hidden there. *@
+                        @if (entry.Steps > 0)
+                        {
+                            <div class="d-flex flex-wrap gap-1 mt-1">
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text">Seed @entry.Seed</MudChip>
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text">@entry.Steps steps</MudChip>
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text">CFG @entry.Cfg</MudChip>
+                                @if (!string.IsNullOrWhiteSpace(entry.Sampler))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text">@entry.Sampler</MudChip>
+                                }
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text">@entry.Width×@entry.Height</MudChip>
+                                @if (entry.Denoise is { } d)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text">Denoise @d.ToString("0.00")</MudChip>
+                                }
+                            </div>
+                        }
+                        <div class="d-flex flex-wrap gap-1 mt-2">
+                            @if (entry.Steps > 0)
+                            {
+                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.Edit" OnClick="@(() => OnApply.InvokeAsync(entry))">Send to Txt2Img</MudButton>
+                            }
+                            @if (available.Count > 0)
+                            {
+                                <MudTooltip Text="Save first image to gallery">
+                                    <MudIconButton Icon="@Icons.Material.Filled.BookmarkAdd" Size="Size.Small" Color="Color.Secondary"
+                                                   OnClick="@(() => SaveToGallery(available[0]))" />
+                                </MudTooltip>
+                            }
+                            @* Single images are downloaded from the gallery; only offer a zip when there are several. *@
+                            @if (viewer.Count > 1)
+                            {
+                                <MudTooltip Text="Download all as ZIP">
+                                    <MudIconButton Icon="@Icons.Material.Filled.FolderZip" Size="Size.Small"
+                                                   OnClick="@(() => DownloadZip(entry))" />
+                                </MudTooltip>
+                            }
+                            <MudTooltip Text="Remove from history">
+                                <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                               OnClick="@(() => Remove(entry.Id))" />
+                            </MudTooltip>
+                        </div>
+                    </div>
+                </div>
+            </MudPaper>
+        </MudVirtualize>
+    }
+</MudPaper>
+
+@code {
+    /// <summary>Raised when the user picks "Send to Txt2Img" — the page applies it to the active set.</summary>
+    [Parameter] public EventCallback<HistoryEntry> OnApply { get; set; }
+
+    protected override void OnInitialized() => History.Changed += OnChanged;
+    public void Dispose() => History.Changed -= OnChanged;
+
+    protected override async Task OnAfterRenderAsync(bool first)
+    {
+        if (first) await History.EnsureLoadedAsync();   // localStorage isn't available until after render
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task SaveToGallery(string id)
+    {
+        var b64 = await GalleryServer.GetResultBase64Async(id);
+        if (b64 is not null) await GallerySaveFlow.RunAsync(DialogService, Http, Snackbar, b64);
+        else Snackbar.Add("That image is no longer in the cache.", Severity.Warning);
+    }
+
+    // All of an entry's still-cached images as viewer URLs: results, then source, then mask.
+    private static List<string> EntryViewerUrls(HistoryEntry e)
+    {
+        var urls = new List<string>();
+        foreach (var id in e.ResultIds)
+            if (GalleryServer.ResultExists(id)) urls.Add($"/results/file?id={id}");
+        if (!string.IsNullOrEmpty(e.SourceId) && GalleryServer.ResultExists(e.SourceId)) urls.Add($"/results/file?id={e.SourceId}");
+        foreach (var m in e.Masks)
+            if (GalleryServer.ResultExists(m.Id)) urls.Add($"/results/file?id={m.Id}");
+        return urls;
+    }
+
+    // A captioned source/mask thumbnail that opens in the same viewer; nothing when the id is unset.
+    private RenderFragment? LabeledThumb(string? id, string label, List<string> viewer)
+    {
+        if (string.IsNullOrEmpty(id)) return null;
+        var url = $"/results/file?id={id}";
+        var vi = viewer.IndexOf(url);
+        return @<div class="d-flex flex-column align-center" style="gap:2px;">
+            @if (vi >= 0)
+            {
+                <MudImage Src="@($"{url}&w=256")" ObjectFit="ObjectFit.Cover"
+                          Class="rounded cursor-pointer" Style="width:96px; height:96px;"
+                          @onclick="@(() => ImageLightbox.ShowAsync(DialogService, viewer, vi, closeOnBackdropClick: true))" />
+            }
+            else
+            {
+                <div class="hist-expired"><MudIcon Icon="@Icons.Material.Filled.ImageNotSupported" /> <span>Image expired</span></div>
+            }
+            <MudText Typo="Typo.caption" Style="opacity:0.7;">@label</MudText>
+        </div>;
+    }
+
+    // Zip the still-cached images of one entry (only offered when an entry has more than one).
+    // Zip every still-cached image in the entry: the result(s), and (for a masked run) the source and
+    // each saved mask.
+    private async Task DownloadZip(HistoryEntry entry)
+    {
+        var stamp = entry.Timestamp.ToString("yyyyMMdd_HHmmss");
+        var files = new List<(string, string)>();
+
+        int n = 0;
+        foreach (var id in entry.ResultIds.Where(GalleryServer.ResultExists))
+        {
+            var b64 = await GalleryServer.GetResultBase64Async(id);
+            if (b64 is not null) files.Add(($"SD_{stamp}_{++n}.png", b64));
+        }
+        if (!string.IsNullOrEmpty(entry.SourceId) && GalleryServer.ResultExists(entry.SourceId))
+        {
+            var b64 = await GalleryServer.GetResultBase64Async(entry.SourceId);
+            if (b64 is not null) files.Add(($"SD_{stamp}_source.png", b64));
+        }
+        foreach (var m in entry.Masks.Where(m => GalleryServer.ResultExists(m.Id)))
+        {
+            var b64 = await GalleryServer.GetResultBase64Async(m.Id);
+            if (b64 is not null) files.Add(($"SD_{stamp}_mask_{SanitizeName(m.Label)}.png", b64));
+        }
+
+        if (files.Count == 0) return;
+        await JS.InvokeVoidAsync("downloadUrl", GalleryServer.BuildZipDownload(files), $"SD_History_{stamp}.zip");
+    }
+
+    private static string SanitizeName(string s)
+        => new string((s ?? "").Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+
+    private Task Remove(string id) => History.RemoveAsync(id);
+
+    private async Task ClearAll()
+    {
+        var ok = await DialogService.ShowMessageBox("Clear history?",
+            "This removes every recorded generation from this device. Saved gallery images are not affected.",
+            yesText: "Clear", cancelText: "Cancel");
+        if (ok == true) await History.ClearAsync();
+    }
+}
+
+<style>
+    .hist-expired {
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+        width: 96px; height: 96px; border: 1px dashed var(--mud-palette-lines-default); border-radius: 8px;
+        color: var(--mud-palette-text-secondary); font-size: 0.7rem; text-align: center;
+    }
+</style>

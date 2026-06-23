@@ -1,0 +1,118 @@
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6"><MudIcon Icon="@Icons.Material.Filled.HelpOutline" Class="mr-2 mb-n1" />@Title</MudText>
+    </TitleContent>
+    <DialogContent>
+        <div style="max-height: 65vh; overflow: auto;">
+            @switch (TabIndex)
+            {
+                case 0: // Txt2Img
+                    <ul class="help-list">
+                        <li>Type a <b>prompt</b> (what you want) and a <b>negative prompt</b> (what to avoid).</li>
+                        <li>Add LoRAs as <code>&lt;lora:name:1.0&gt;</code> — or just click them on the <b>LoRA</b> tab and they're inserted for you.</li>
+                        <li>Autocomplete pops up as you type; <b>Enter</b> accepts a suggestion, <b>Tab</b> moves to the next field.</li>
+                        <li><b>Prompt Tools</b> (below the prompts): quick tags, tag board, rearrange, saved tag groups, and a <b>Dynamic prompts</b> guide (<code>{a|b}</code>, <code>__wildcard__</code>).</li>
+                        <li><b>Presets</b> save/restore a full settings snapshot. <b>Ctrl/Cmd+Enter</b> generates.</li>
+                        <li><b>Surprise Me</b> rolls a random prompt + seed; <b>A/B compare</b> runs two control sets side by side.</li>
+                        <li>On each result: read its <b>PNG info</b>, <b>Save to Gallery</b>, or use <b>Send</b> to push it to Img2Img or Upscale.</li>
+                    </ul>
+                    break;
+                case 1: // Img2Img
+                    <ul class="help-list">
+                        <li><b>Drop</b> or click to add an input image — its size drives the output (see Resize To / Resize By).</li>
+                        <li><b>Denoising Strength</b> controls how much the image changes (low = subtle, high = very different). It matters in every mode below.</li>
+                        <li>Use <b>Read PNG info</b> on the input to recover the prompt/params it was made with, then <b>Add to prompt</b>.</li>
+                        <li>The prompt tools, presets and <b>Ctrl/Cmd+Enter</b> work just like on Txt2Img.</li>
+                    </ul>
+
+                    <MudText Typo="Typo.subtitle2" Class="mt-3 mb-1"><MudIcon Icon="@Icons.Material.Filled.Brush" Size="Size.Small" Class="mr-1 mb-n1" />Inpaint — regenerate part of the image</MudText>
+                    <ul class="help-list">
+                        <li>Turn on <b>Inpaint</b>, then <b>paint a mask</b> over the area to change. <b>Brush</b>/<b>Eraser</b>/<b>Cursor</b> (cursor = pan without painting), <b>Undo/Redo</b> (or <b>Ctrl+Z</b> / <b>Ctrl+Y</b>), and <b>Clear</b>.</li>
+                        <li>Resize the brush with the slider or by <b>holding Alt and scrolling</b> over the image. <b>Brush color</b> and <b>Overlay</b> opacity only change how the mask looks — the exported mask is always the painted area.</li>
+                        <li><b>Masked content</b> seeds the area before regenerating (<i>original</i>, <i>fill</i>, <i>latent noise</i>, <i>latent nothing</i>); <b>Mask blur</b> softens the seam; <b>Invert mask</b> regenerates everything <i>except</i> what you painted.</li>
+                        <li><b>Only masked</b> crops to the mask and regenerates it at full resolution (great for faces/hands). <b>Only-masked padding</b> sets how much surrounding context the crop includes — <b>Show on image</b> outlines that crop.</li>
+                    </ul>
+
+                    <MudText Typo="Typo.subtitle2" Class="mt-3 mb-1"><MudIcon Icon="@Icons.Material.Filled.Gesture" Size="Size.Small" Class="mr-1 mb-n1" />Inpaint sketch — paint colors to guide the result</MudText>
+                    <ul class="help-list">
+                        <li>With Inpaint on, also enable <b>Sketch mode</b>. Now the <b>colors you paint</b> are blended into the masked area as a starting point — so painting a red blob and prompting for it nudges the result toward a red object there.</li>
+                        <li>Set <b>Masked content = original</b> and use <b>Denoising ~0.7–0.85</b>: too low and your paint stays a flat blob, too high and the color is ignored. Paint <b>bold, solid</b> shapes and mention them in the prompt.</li>
+                    </ul>
+
+                    <MudText Typo="Typo.subtitle2" Class="mt-3 mb-1"><MudIcon Icon="@Icons.Material.Filled.OpenInFull" Size="Size.Small" Class="mr-1 mb-n1" />Outpaint — extend the image outward</MudText>
+                    <ul class="help-list">
+                        <li>Turn on <b>Outpaint</b>, set <b>Expand by</b> (pixels) and pick the <b>directions</b> (Left/Up/Down/Right) to grow into. The new output size is shown live.</li>
+                        <li>The new border continues your image's edge pixels, so <b>Border fill</b> = <i>latent noise</i> or <i>original</i> both work; pair it with <b>high Denoising (~0.8–1.0)</b> to invent new content. Resize settings are ignored — the size is set for you.</li>
+                    </ul>
+                    break;
+                case 2: // Upscale
+                    <ul class="help-list">
+                        <li><b>Drop</b> or add one or more images, choose a <b>scale</b> (the resulting resolution is shown) or target dimensions.</li>
+                        <li>Pick one or more <b>upscalers</b> from the dropdown — with several selected, every image is run through each so you can <b>compare</b> them.</li>
+                        <li>Tap a result to open it fullscreen: the original and each upscaler are <b>labelled</b> so you can tell them apart.</li>
+                        <li>Optional <b>face restoration</b> (GFPGAN / CodeFormer). An upscaler downloads its model the first time it's used.</li>
+                    </ul>
+                    break;
+                case 3: // LoRA
+                    <ul class="help-list">
+                        <li>Browses the LoRAs in your models folder. <b>Click a card</b> to add (or remove) it from the Txt2Img prompt.</li>
+                        <li><b>Sort</b> by Name / Age / Size / Type / Usage / Random, with a direction toggle; mark <b>favourites</b> (★) and filter by <b>base model</b> or folder.</li>
+                        <li><b>Fetch missing</b> looks up LoRAs without a <code>.civitai.json</code> on Civitai by file hash and writes their metadata + previews.</li>
+                        <li>The <b>ⓘ</b> button opens details: previews, trigger words, and an update check.</li>
+                    </ul>
+                    break;
+                case 4: // Gallery
+                    <ul class="help-list">
+                        <li>A shared, on-disk library of saved images. <b>Albums</b> are folders; loose images are <b>Unsorted</b>.</li>
+                        <li>Add images with <b>Save to Gallery</b> on any generated result.</li>
+                        <li><b>Select</b> enables multi-select for batch <b>Move</b>, <b>Delete</b>, or <b>Download</b> (one zip).</li>
+                        <li>Adjust <b>card size</b> with the slider. Open an image fullscreen, <b>tap once</b> to hide/show the controls, and <b>drag up from the bottom</b> to view its metadata.</li>
+                    </ul>
+                    break;
+                case 5: // Civitai
+                    <ul class="help-list">
+                        <li>Search and download models from Civitai. Some content needs a Civitai <b>API key</b> (set it in Settings).</li>
+                        <li><b>Left / Right arrow</b> keys page through results.</li>
+                        <li>Downloads are written into your models folder with their metadata, so they show up on the LoRA tab.</li>
+                    </ul>
+                    break;
+                case 6: // Server
+                    <ul class="help-list">
+                        <li>Start / stop the local Stable Diffusion server process and watch its console output here.</li>
+                        <li>Set the server address and launch script in <b>Settings</b>. The API must be enabled (<code>--api</code>).</li>
+                    </ul>
+                    break;
+                default:
+                    <MudText Typo="Typo.body2">No help for this tab yet.</MudText>
+                    break;
+            }
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Close">Got it</MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .help-list { margin: 0; padding-left: 1.2em; }
+    .help-list li { margin-bottom: 0.5em; line-height: 1.5; }
+</style>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public int TabIndex { get; set; }
+
+    private string Title => TabIndex switch
+    {
+        0 => "Txt2Img — help",
+        1 => "Img2Img — help",
+        2 => "Upscale — help",
+        3 => "LoRA — help",
+        4 => "Gallery — help",
+        5 => "Civitai — help",
+        6 => "Server — help",
+        _ => "Help"
+    };
+
+    private void Close() => MudDialog.Close();
+}

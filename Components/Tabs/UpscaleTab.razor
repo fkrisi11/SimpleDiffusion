@@ -1,0 +1,683 @@
+@namespace SimpleDiffusion.Components.Tabs
+@using Microsoft.AspNetCore.Components.Forms
+@using System.Net.Http.Json
+@using SimpleDiffusion.Components
+@using SimpleDiffusion.Infrastructure
+@inject IJSRuntime JS
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject HttpClient AppHttp
+@inject SimpleDiffusion.Components.Services.HistoryService History
+
+<MudPaper Class="pa-4" Elevation="0" Width="100%" Style="background: transparent;">
+
+    @* ---- Results (grouped per source image; original + each upscaler, for comparison) ---- *@
+    @if (_groups.Any())
+    {
+        <div class="d-flex justify-space-between align-center mb-3">
+            <MudText Typo="Typo.h6">Results</MudText>
+            <div class="d-flex gap-2">
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.Archive"
+                           OnClick="DownloadAllAsZip">Download all (ZIP)</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete"
+                           OnClick="@(() => { _groups.Clear(); StateHasChanged(); })">Clear</MudButton>
+            </div>
+        </div>
+
+        @foreach (var (group, gi) in _groups.Select((g, i) => (g, i)))
+        {
+            <MudText Typo="Typo.subtitle2" Class="mb-1 mt-2">
+                Image @(gi + 1) — @group.Source.Width×@group.Source.Height
+                @if (group.Results.Count > 1) { <span style="opacity:0.6;"> · tap any to compare</span> }
+            </MudText>
+            <MudGrid Spacing="2" Class="mb-4">
+                @* Original *@
+                <MudItem xs="6" sm="4" md="3">
+                    <MudPaper Height="240px" Class="d-flex align-center justify-center overflow-hidden pa-1"
+                              Style="background-color: var(--mud-palette-background-grey); position:relative" Elevation="2">
+                        <MudImage Src="@($"data:{group.Source.MimeType};base64,{group.Source.Base64}")" ObjectFit="ObjectFit.Contain"
+                                  Class="cursor-pointer" Style="max-height:100%; max-width:100%;"
+                                  @onclick="@(() => OpenGroupLightbox(group, 0))" />
+                        <div class="sd-up-tag">Original</div>
+                    </MudPaper>
+                </MudItem>
+
+                @* Each upscaler's output *@
+                @foreach (var (r, ri) in group.Results.Select((v, i) => (v, i)))
+                {
+                    <MudItem xs="6" sm="4" md="3">
+                        <MudPaper Height="240px" Class="d-flex align-center justify-center overflow-hidden pa-1"
+                                  Style="background-color: var(--mud-palette-background-grey); position:relative" Elevation="4">
+                            <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Default" Class="sd-tile-spinner" />
+                            <MudImage Src="@($"/results/file?id={r.Id}&w={GridThumbWidth}")" ObjectFit="ObjectFit.Contain"
+                                      Class="cursor-pointer" Style="max-height:100%; max-width:100%;"
+                                      @onclick="@(() => OpenGroupLightbox(group, ri + 1))" />
+                            <div class="sd-up-tag">@r.Upscaler · @r.OutW×@r.OutH</div>
+                        </MudPaper>
+                        <div style="display:flex; gap:6px; margin-top:0.4em">
+                            <SendMenu Resolve="@(() => GalleryServer.GetResultBase64Async(r.Id))" />
+                            <MudTooltip Text="Save to Gallery">
+                                <MudIconButton Icon="@Icons.Material.Filled.BookmarkAdd" Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small"
+                                               OnClick="@(() => SaveResultToGallery(r))" />
+                            </MudTooltip>
+                            <MudTooltip Text="Download PNG">
+                                <MudIconButton Icon="@Icons.Material.Filled.FileDownload" Variant="Variant.Filled" Color="Color.Default" Size="Size.Small"
+                                               OnClick="@(() => Download(r, gi))" />
+                            </MudTooltip>
+                        </div>
+                    </MudItem>
+                }
+            </MudGrid>
+        }
+    }
+
+    @* ---- Inputs ---- *@
+    <div class="sd-up-dropzone" @ref="_dropZone">
+        <MudPaper Class="pa-3 mb-3" Elevation="2" Style="background-color: var(--mud-palette-background-grey);">
+            <div class="d-flex justify-space-between align-center mb-2">
+                <MudText Typo="Typo.subtitle1">Images to upscale @(_items.Count > 0 ? $"({_items.Count})" : "")</MudText>
+                @if (_items.Any())
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                               StartIcon="@Icons.Material.Filled.Delete" OnClick="ClearInputs">Remove all</MudButton>
+                }
+            </div>
+
+            <MudGrid Spacing="2">
+                @foreach (var (item, index) in _items.Select((v, i) => (v, i)))
+                {
+                    <MudItem xs="6" sm="3" md="2">
+                        <MudPaper Class="d-flex align-center justify-center overflow-hidden pa-1" Elevation="1"
+                                  Style="position:relative; aspect-ratio:1; background: rgba(0,0,0,0.06);">
+                            <MudImage Src="@($"data:{item.MimeType};base64,{item.Base64}")" ObjectFit="ObjectFit.Cover"
+                                      Style="width:100%; height:100%;" />
+                            <div style="position:absolute; top:2px; right:2px;">
+                                <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" Color="Color.Error"
+                                               Variant="Variant.Filled" OnClick="@(() => RemoveInput(index))" />
+                            </div>
+                            <div class="sd-up-dim">
+                                @item.Width×@item.Height@(_resizeMode == 0 && item.Width > 0 ? $" → {Scaled(item.Width)}×{Scaled(item.Height)}" : "")
+                            </div>
+                        </MudPaper>
+                    </MudItem>
+                }
+
+                @* Add tile (drag-drop + click). *@
+                <MudItem xs="6" sm="3" md="2">
+                    <div class="sd-up-add">
+                        <InputFile OnChange="OnFilesSelected" accept="image/*" multiple class="sd-up-file-cover" />
+                        <div class="sd-up-add-content">
+                            <MudIcon Icon="@Icons.Material.Filled.Add" Size="Size.Large" />
+                            <MudText Typo="Typo.caption">Drop / browse</MudText>
+                        </div>
+                    </div>
+                </MudItem>
+            </MudGrid>
+        </MudPaper>
+    </div>
+
+    @* ---- Settings ---- *@
+    <MudPaper Class="pa-4 mb-3" Elevation="0" Outlined="true">
+        <MudSelect T="string" Label="Upscalers" MultiSelection="true"
+                   SelectedValues="_selectedUpscalers" SelectedValuesChanged="OnUpscalersChanged"
+                   Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined" Clearable="true"
+                   HelperText="@(_selectedUpscalers.Count > 1 ? "Each input is run through every selected upscaler and compared." : null)"
+                   MultiSelectionTextFunc="@(vals => vals.Count == 0 ? "" : vals.Count == 1 ? vals[0] : $"{vals.Count} upscalers")">
+            @foreach (var u in RealUpscalers)
+            {
+                <MudSelectItem T="string" Value="@u.name">@u.name</MudSelectItem>
+            }
+        </MudSelect>
+
+        @if (SelectedMayDownload().Count > 0)
+        {
+            <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mt-2" Icon="@Icons.Material.Filled.CloudDownload">
+                Heads up: an upscaler's model is downloaded by the server the first time it's used. If it isn't already installed, the first run can take a while to fetch it.
+            </MudAlert>
+        }
+
+        <MudGrid Class="mt-1">
+            <MudItem xs="12">
+                <MudRadioGroup T="int" @bind-Value="_resizeMode">
+                    <MudRadio T="int" Value="0" Color="Color.Primary" Dense="true">Scale by multiplier</MudRadio>
+                    <MudRadio T="int" Value="1" Color="Color.Primary" Dense="true">Resize to dimensions</MudRadio>
+                </MudRadioGroup>
+            </MudItem>
+
+            @if (_resizeMode == 0)
+            {
+                <MudItem xs="12" sm="6">
+                    <MudSlider T="double" @bind-Value="_scale" Min="1" Max="8" Step="0.5" Color="Color.Primary">
+                        Scale: @_scale.ToString("0.0")× @ScalePreviewLabel()
+                    </MudSlider>
+                </MudItem>
+            }
+            else
+            {
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="int" Value="_targetW" ValueChanged="OnTargetWidthChanged" Label="Width" Min="1" Max="8192" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="int" Value="_targetH" ValueChanged="OnTargetHeightChanged" Label="Height" Min="1" Max="8192" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="4" Class="d-flex align-center flex-wrap gap-2">
+                    <MudCheckBox T="bool" @bind-Value="_crop" Label="Crop to fit" Color="Color.Primary" />
+                    <MudTooltip Text="Keep the current ratio when changing width or height">
+                        <MudCheckBox T="bool" Value="_lockAspectUp" ValueChanged="OnLockAspectUpChanged" Dense="true" Label="Lock" />
+                    </MudTooltip>
+                </MudItem>
+            }
+
+            <MudItem xs="12">
+                <MudExpansionPanels Elevation="0">
+                    <MudExpansionPanel Text="Face restoration (optional)" Style="background: transparent;">
+                        <MudGrid>
+                            <MudItem xs="12" sm="4">
+                                <MudSlider T="double" @bind-Value="_gfpgan" Min="0" Max="1" Step="0.05" Color="Color.Primary">
+                                    GFPGAN: @_gfpgan.ToString("0.00")
+                                </MudSlider>
+                            </MudItem>
+                            <MudItem xs="12" sm="4">
+                                <MudSlider T="double" @bind-Value="_codeformer" Min="0" Max="1" Step="0.05" Color="Color.Secondary">
+                                    CodeFormer: @_codeformer.ToString("0.00")
+                                </MudSlider>
+                            </MudItem>
+                            <MudItem xs="12" sm="4">
+                                <MudSlider T="double" @bind-Value="_codeformerWeight" Min="0" Max="1" Step="0.05" Color="Color.Secondary">
+                                    CF weight: @_codeformerWeight.ToString("0.00")
+                                </MudSlider>
+                            </MudItem>
+                        </MudGrid>
+                    </MudExpansionPanel>
+                </MudExpansionPanels>
+            </MudItem>
+        </MudGrid>
+
+        <MudButton OnClick="Upscale" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-3"
+                   StartIcon="@Icons.Material.Filled.PhotoSizeSelectLarge"
+                   Disabled="@(_busy || !_items.Any() || _selectedUpscalers.Count == 0 || ServerOffline)">
+            @if (_busy)
+            {
+                <text>Upscaling…</text>
+            }
+            else
+            {
+                <text>Upscale@(_selectedUpscalers.Count > 1 ? $" with {_selectedUpscalers.Count} upscalers" : "")</text>
+            }
+        </MudButton>
+        @if (_busy)
+        {
+            <div class="d-flex align-center justify-space-between mt-2">
+                <MudText Typo="Typo.caption" Style="opacity:0.85;">@_progressText@(_eta > 0 ? $" · ~{_eta:0}s" : "")</MudText>
+                <div class="d-flex gap-2">
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                               StartIcon="@Icons.Material.Filled.SkipNext" OnClick="Skip">Skip</MudButton>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                               StartIcon="@Icons.Material.Filled.Stop" OnClick="Cancel" Disabled="_cancelling">Cancel</MudButton>
+                </div>
+            </div>
+            <MudProgressLinear Color="Color.Primary" Indeterminate="@(_progressPct <= 0)" Value="@_progressPct" Class="mt-1" Rounded="true" />
+        }
+    </MudPaper>
+</MudPaper>
+
+@code {
+    [Parameter] public List<UpscalerInfo> Upscalers { get; set; } = new();
+    [Parameter] public HttpClient SdHttp { get; set; } = default!; // Stable Diffusion API client
+    /// <summary>True when the SD server is unreachable — disables Upscale.</summary>
+    [Parameter] public bool ServerOffline { get; set; }
+
+    private readonly List<UpItem> _items = new();
+    private readonly List<UpGroup> _groups = new();
+
+    private HashSet<string> _selectedUpscalers = new(StringComparer.OrdinalIgnoreCase);
+    private int _resizeMode = 0;       // 0 = scale, 1 = dimensions
+    private double _scale = 2.0;
+    private int _targetW = 2048, _targetH = 2048;
+    private bool _lockAspectUp;
+    private double _lockedAspectUp = 1.0;
+
+    private void OnLockAspectUpChanged(bool on)
+    {
+        _lockAspectUp = on;
+        if (on && _targetH > 0) _lockedAspectUp = (double)_targetW / _targetH;
+    }
+    private void OnTargetWidthChanged(int v)
+    {
+        _targetW = v;
+        if (_lockAspectUp && _lockedAspectUp > 0) _targetH = Math.Max(1, (int)Math.Round(v / _lockedAspectUp));
+    }
+    private void OnTargetHeightChanged(int v)
+    {
+        _targetH = v;
+        if (_lockAspectUp && _lockedAspectUp > 0) _targetW = Math.Max(1, (int)Math.Round(v * _lockedAspectUp));
+    }
+    private bool _crop = true;
+    private double _gfpgan, _codeformer, _codeformerWeight;
+
+    private bool _busy;
+    private bool _cancelling;
+    private int _progressPct;
+    private double _eta;            // seconds remaining for the current step (from the SD API)
+    private double _stepFraction;   // 0..1 progress within the current image (best-effort)
+    private string _progressText = "";
+
+    private ElementReference _dropZone;
+    private bool _hoverAttached;
+
+    private IEnumerable<UpscalerInfo> RealUpscalers =>
+        Upscalers.Where(u => !string.Equals(u.name, "None", StringComparison.OrdinalIgnoreCase));
+
+    private int Scaled(int dim) => (int)Math.Round(dim * _scale);
+
+    // Resulting resolution preview shown next to the scale slider (based on the first queued image).
+    private string ScalePreviewLabel()
+    {
+        if (_items.Count == 0) return "";
+        var f = _items[0];
+        if (f.Width == 0) return "";
+        var label = $"→ {Scaled(f.Width)}×{Scaled(f.Height)}";
+        bool varies = _items.Any(i => i.Width != f.Width || i.Height != f.Height);
+        return _items.Count > 1 && varies ? $"{label} (1st)" : label;
+    }
+
+    private void OnUpscalersChanged(IEnumerable<string> values)
+    {
+        _selectedUpscalers = new HashSet<string>(values ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        StateHasChanged();
+    }
+
+    // Built-in upscalers that never download a model (run from the loaded model / simple resamplers).
+    private static readonly HashSet<string> NoDownloadUpscalers =
+        new(new[] { "None", "Lanczos", "Nearest" }, StringComparer.OrdinalIgnoreCase);
+
+    // True if this upscaler loads a separate model file, which the server fetches on first use.
+    private bool MayDownload(string name) =>
+        !NoDownloadUpscalers.Contains(name) &&
+        !name.StartsWith("Latent", StringComparison.OrdinalIgnoreCase);
+
+    private List<string> SelectedMayDownload() =>
+        _selectedUpscalers.Where(MayDownload).OrderBy(n => n).ToList();
+
+    private bool _defaultApplied;
+
+    protected override void OnParametersSet()
+    {
+        // Once the server's upscaler list arrives, pre-select the first real upscaler (once).
+        if (!_defaultApplied && RealUpscalers.Any())
+        {
+            _selectedUpscalers.Add(RealUpscalers.First().name);
+            _defaultApplied = true;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_hoverAttached) return;
+        try { await JS.InvokeVoidAsync("sdDropHover.attach", _dropZone); _hoverAttached = true; } catch { }
+    }
+
+    /// <summary>Queue an externally-supplied image (raw base64) for upscaling. Used by the global
+    /// "Send → Upscale" action.</summary>
+    public async Task AddImage(string base64, string mimeType = "image/png")
+    {
+        if (string.IsNullOrEmpty(base64)) return;
+        try
+        {
+            var dims = await JS.InvokeAsync<ImageDims>("sdHelpers.getImageDimensionsFromBase64", base64, mimeType);
+            _items.Add(new UpItem { Base64 = base64, MimeType = mimeType, Width = dims.width, Height = dims.height });
+        }
+        catch
+        {
+            _items.Add(new UpItem { Base64 = base64, MimeType = mimeType });
+        }
+        StateHasChanged();
+    }
+
+    private async Task OnFilesSelected(InputFileChangeEventArgs e)
+    {
+        foreach (var file in e.GetMultipleFiles(maximumFileCount: 100))
+        {
+            try
+            {
+                using var ms = new MemoryStream();
+                await file.OpenReadStream(maxAllowedSize: 100 * 1024 * 1024).CopyToAsync(ms);
+                var b64 = Convert.ToBase64String(ms.ToArray());
+                var dims = await JS.InvokeAsync<ImageDims>("sdHelpers.getImageDimensionsFromBase64", b64, file.ContentType);
+                _items.Add(new UpItem { Base64 = b64, MimeType = file.ContentType, Width = dims.width, Height = dims.height });
+                StateHasChanged();
+            }
+            catch { /* skip unreadable files */ }
+        }
+    }
+
+    private void RemoveInput(int index)
+    {
+        if (index >= 0 && index < _items.Count) _items.RemoveAt(index);
+        StateHasChanged();
+    }
+
+    private void ClearInputs()
+    {
+        _items.Clear();
+        StateHasChanged();
+    }
+
+    /// <summary>Start an upscale run — used by the mobile bottom-nav Generate button.</summary>
+    public Task RunUpscale() => Upscale();
+
+    /// <summary>True while an upscale run is in progress (drives the mobile FAB's busy state).</summary>
+    public bool IsBusy => _busy;
+
+    /// <summary>Whether an upscale can start right now — matches the in-tab Upscale button's enabled state.</summary>
+    public bool CanGenerate => !_busy && _items.Count > 0 && _selectedUpscalers.Count > 0;
+
+    private async Task Upscale()
+    {
+        if (_busy || _items.Count == 0 || _selectedUpscalers.Count == 0) return;
+        _busy = true;
+        _cancelling = false;
+        _groups.Clear();
+        try { await JS.InvokeVoidAsync("sdHaptic.buzz", 30); } catch { }
+
+        var upscalers = _selectedUpscalers.ToList();
+        int total = _items.Count * upscalers.Count;
+        int done = 0;
+
+        // One image × one upscaler per request, so progress is visible, results stream in, and a
+        // single failure doesn't sink the batch.
+        foreach (var item in _items)
+        {
+            if (_cancelling) break;
+            var group = new UpGroup { Source = item };
+            _groups.Add(group);
+
+            // The source's original generation parameters (if it came from a generated image), so we
+            // can carry them onto the upscaled output ahead of the upscaling info.
+            var srcParams = PngMetadata.ExtractParameters(item.Base64);
+
+            foreach (var up in upscalers)
+            {
+                if (_cancelling) break;
+
+                bool mayDl = MayDownload(up);
+                _stepFraction = 0; _eta = 0;
+                _progressText = mayDl
+                    ? $"Upscaling {done + 1} of {total} with {up} (first use may download the model)…"
+                    : $"Upscaling {done + 1} of {total} with {up}…";
+                _progressPct = (int)(100.0 * done / total);
+                StateHasChanged();
+
+                var req = new ExtraSingleRequest
+                {
+                    resize_mode = _resizeMode,
+                    upscaling_resize = _scale,
+                    upscaling_resize_w = _targetW,
+                    upscaling_resize_h = _targetH,
+                    upscaling_crop = _crop,
+                    upscaler_1 = up,
+                    extras_upscaler_2_visibility = 0,
+                    gfpgan_visibility = _gfpgan,
+                    codeformer_visibility = _codeformer,
+                    codeformer_weight = _codeformerWeight,
+                    image = item.Base64,
+                };
+
+                var cts = new CancellationTokenSource();
+                var poll = PollProgress(cts.Token, done, total);
+                try
+                {
+                    var resp = await SdHttp.PostAsJsonAsync("sdapi/v1/extra-single-image", req);
+                    var res = await resp.Content.ReadFromJsonAsync<ExtraSingleResponse>();
+                    if (!string.IsNullOrEmpty(res?.image))
+                    {
+                        int w = 0, h = 0;
+                        try { var d = await JS.InvokeAsync<ImageDims>("sdHelpers.getImageDimensionsFromBase64", res.image, "image/png"); w = d.width; h = d.height; }
+                        catch { }
+                        // Persist the output to the result store (off-thread — a 16k decode/write is heavy)
+                        // and keep only its id. Pre-warm the grid thumbnail so the tile isn't blank.
+                        try
+                        {
+                            // Embed the upscaler in its own "Upscaling" chunk (not "parameters", which is
+                            // the generation info) and carry over the source's generation params when present.
+                            var upInfo = (w > 0 && h > 0)
+                                ? $"Upscaler: {up}, Source size: {item.Width}x{item.Height}, Result size: {w}x{h}"
+                                : $"Upscaler: {up}, Source size: {item.Width}x{item.Height}";
+                            var id = await Task.Run(() =>
+                            {
+                                var bytes = Convert.FromBase64String(res.image);
+                                if (!string.IsNullOrWhiteSpace(srcParams) && string.IsNullOrWhiteSpace(PngMetadata.ExtractParameters(bytes)))
+                                    bytes = PngMetadata.AddTextChunk(bytes, "parameters", srcParams);
+                                bytes = PngMetadata.AddTextChunk(bytes, "Upscaling", upInfo);
+                                return GalleryServer.SaveResultBytes(bytes);
+                            });
+                            group.Results.Add(new UpResult { Id = id, Upscaler = up, OutW = w, OutH = h });
+                            _ = GalleryServer.WarmResultTierAsync(id, GridThumbWidth);
+                        }
+                        catch { /* couldn't persist the result; skip it */ }
+                    }
+                }
+                catch { /* skipped or failed image */ }
+                finally { cts.Cancel(); try { await poll; } catch { } }
+
+                done++;
+                _progressPct = (int)(100.0 * done / total);
+                StateHasChanged();
+            }
+        }
+
+        _progressPct = 100;
+        _busy = false;
+        _cancelling = false;
+        int produced = _groups.Sum(g => g.Results.Count);
+        if (produced == 0) Snackbar.Add("No upscaled images were produced.", Severity.Warning);
+        else Snackbar.Add($"Upscaled {produced} image{(produced == 1 ? "" : "s")}.", Severity.Success);
+
+        // Record the upscaled outputs to history (per device) so a refresh can recover them while cached.
+        var upscaledIds = _groups.SelectMany(g => g.Results.Select(rr => rr.Id)).ToList();
+        if (upscaledIds.Count > 0)
+            await History.AddAsync(new HistoryEntry { Source = "Upscale", ResultIds = upscaledIds });
+
+        StateHasChanged();
+    }
+
+    // Poll the SD progress endpoint during a step. Extras/upscaling may or may not report a fraction,
+    // so this is best-effort: it drives the ETA and advances the bar within the current step when it can.
+    private async Task PollProgress(CancellationToken ct, int done, int total)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                var prog = await SdHttp.GetFromJsonAsync<SdProgressResponse>("sdapi/v1/progress", ct);
+                if (prog != null)
+                {
+                    _stepFraction = Math.Clamp(prog.progress, 0, 1);
+                    _eta = prog.eta_relative;
+                    _progressPct = (int)(100.0 * (done + _stepFraction) / total);
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+            catch { /* ignore poll errors */ }
+            try { await Task.Delay(500, ct); } catch { break; }
+        }
+    }
+
+    // Stop the whole batch.
+    private async Task Cancel()
+    {
+        _cancelling = true;
+        try { await SdHttp.PostAsync("sdapi/v1/interrupt", null); } catch { }
+    }
+
+    // Skip the current image and continue with the next.
+    private async Task Skip()
+    {
+        try { await SdHttp.PostAsync("sdapi/v1/interrupt", null); } catch { }
+    }
+
+    private async Task Download(UpResult r, int groupIndex)
+    {
+        var fileName = $"SD_upscaled_{groupIndex + 1}_{r.Upscaler}_{DateTime.Now:yyyyMMdd_HHmmss}.png";
+        // Download the full-res original straight from the store URL — no base64 round-trip to the client.
+        try { await JS.InvokeVoidAsync("downloadUrl", $"/results/file?id={r.Id}", fileName); } catch { }
+    }
+
+    private async Task SaveResultToGallery(UpResult r)
+    {
+        var b64 = await GalleryServer.GetResultBase64Async(r.Id);
+        if (b64 is not null) await GallerySaveFlow.RunAsync(DialogService, AppHttp, Snackbar, b64);
+    }
+
+    private async Task DownloadAllAsZip()
+    {
+        // Pull each result's bytes from the store only now (on explicit download) rather than holding
+        // them all in memory the whole time.
+        var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        var files = new List<(string, string)>();
+        int n = 0;
+        for (int gi = 0; gi < _groups.Count; gi++)
+        {
+            foreach (var r in _groups[gi].Results)
+            {
+                var b64 = await GalleryServer.GetResultBase64Async(r.Id);
+                if (b64 is not null) files.Add(($"SD_{stamp}_{++n}.png", b64));
+            }
+        }
+        if (files.Count == 0) return;
+        var zipName = $"SD_Upscaled_{stamp}.zip";
+        await JS.InvokeVoidAsync("downloadUrl", GalleryServer.BuildZipDownload(files), zipName);
+    }
+
+    // Open the fullscreen viewer on a group: original first, then each upscaler — captioned so the
+    // viewer shows which is which.
+    private void OpenGroupLightbox(UpGroup group, int selectedIndex)
+    {
+        // Source stays inline base64 (it's the smaller input; the viewer downscales it server-side
+        // via the mem-tier path); each result is a store URL the viewer tiers like a gallery file.
+        var images = new List<string> { group.Source.Base64 };
+        images.AddRange(group.Results.Select(r => $"/results/file?id={r.Id}"));
+
+        var caps = new List<string> { $"Original ({group.Source.Width}×{group.Source.Height})" };
+        caps.AddRange(group.Results.Select(r => $"{r.Upscaler} ({r.OutW}×{r.OutH})"));
+
+        ImageLightbox.ShowAsync(DialogService, images, selectedIndex, captions: caps);
+    }
+
+    private sealed class UpItem
+    {
+        public string Base64 { get; set; } = "";
+        public string MimeType { get; set; } = "image/png";
+        public int Width { get; set; }
+        public int Height { get; set; }
+    }
+
+    private sealed class UpResult
+    {
+        // The output bytes live on disk in the result store (#5); we keep only the id so a 16k image
+        // isn't held in memory or shipped to the client. The grid/viewer fetch tiers by URL.
+        public string Id { get; set; } = "";
+        public string Upscaler { get; set; } = "";
+        public int OutW { get; set; }
+        public int OutH { get; set; }
+    }
+
+    // Long-edge size for the result grid thumbnails (covers a retina grid tile).
+    private const int GridThumbWidth = 512;
+
+    private sealed class UpGroup
+    {
+        public UpItem Source { get; set; } = default!;
+        public List<UpResult> Results { get; } = new();
+    }
+
+    private sealed class ImageDims { public int width { get; set; } public int height { get; set; } }
+
+    private class ExtraSingleRequest
+    {
+        public int resize_mode { get; set; }
+        public bool show_extras_results { get; set; } = true;
+        public double gfpgan_visibility { get; set; }
+        public double codeformer_visibility { get; set; }
+        public double codeformer_weight { get; set; }
+        public double upscaling_resize { get; set; } = 2;
+        public int upscaling_resize_w { get; set; } = 1024;
+        public int upscaling_resize_h { get; set; } = 1024;
+        public bool upscaling_crop { get; set; } = true;
+        public string upscaler_1 { get; set; } = "None";
+        public string upscaler_2 { get; set; } = "None";
+        public double extras_upscaler_2_visibility { get; set; }
+        public bool upscale_first { get; set; }
+        public string image { get; set; } = "";
+    }
+
+    private sealed class ExtraSingleResponse
+    {
+        public string? image { get; set; }
+        public string? html_info { get; set; }
+    }
+}
+
+<style>
+    .sd-up-dropzone { position: relative; }
+
+    .sd-up-add {
+        position: relative;
+        aspect-ratio: 1;
+        border: 2px dashed var(--mud-palette-lines-default);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .sd-up-file-cover {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        cursor: pointer;
+        z-index: 1;
+    }
+
+    .sd-up-add-content {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        align-items: center;
+        justify-content: center;
+        color: var(--mud-palette-text-secondary);
+    }
+
+    .sd-up-dim {
+        position: absolute;
+        left: 4px;
+        bottom: 4px;
+        font-size: 0.7rem;
+        padding: 1px 5px;
+        border-radius: 6px;
+        background: rgba(0,0,0,0.55);
+        color: #fff;
+    }
+
+    /* Result label chip (e.g. "Original", "R-ESRGAN 4x+ · 2048×2048"). */
+    .sd-up-tag {
+        position: absolute;
+        left: 4px;
+        top: 4px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        padding: 1px 6px;
+        border-radius: 6px;
+        background: rgba(0,0,0,0.6);
+        color: #fff;
+        max-width: calc(100% - 8px);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .sd-up-dropzone.sd-drop-hover .sd-up-add {
+        outline: 2px dashed var(--mud-palette-primary);
+        outline-offset: 4px;
+    }
+</style>

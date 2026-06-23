@@ -1,0 +1,82 @@
+@using System.Text.RegularExpressions
+
+<div class="d-flex flex-wrap gap-2 align-center pa-2 mb-2 utility-bar-container">
+    <MudButton StartIcon="@Icons.Material.Filled.Brush" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary" OnClick="FormatPrompt" title="Format prompt spacing and merge duplicate tags">
+        Format
+    </MudButton>
+    <MudButton StartIcon="@Icons.Material.Filled.LayersClear" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info" OnClick="StripLoras" title="Remove all LoRA tags">
+        Strip LoRAs
+    </MudButton>
+    <MudSpacer />
+    <MudButton StartIcon="@Icons.Material.Filled.Delete" Size="Size.Small" Variant="Variant.Filled" Color="Color.Error" OnClick="ClearPrompt" title="Clear prompt content">
+        Clear
+    </MudButton>
+</div>
+
+<style>
+    .utility-bar-container {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        background: rgba(255, 255, 255, 0.01);
+        border-radius: 6px;
+    }
+</style>
+
+@code {
+    [Parameter] public string Prompt { get; set; } = "";
+    [Parameter] public EventCallback<string> OnPromptChanged { get; set; }
+
+    private async Task FormatPrompt()
+    {
+        if (string.IsNullOrWhiteSpace(Prompt)) return;
+
+        var tokens = PromptTokenizer.SplitTopLevel(Prompt)
+            .Select(t => t.Trim())
+            .Where(t => t.Length > 0);
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var unique = new List<string>();
+        foreach (var t in tokens)
+        {
+            if (seen.Add(t))
+            {
+                unique.Add(t);
+            }
+        }
+        
+        Prompt = string.Join(", ", unique);
+        if (!string.IsNullOrEmpty(Prompt))
+        {
+            Prompt += ", ";
+        }
+        await OnPromptChanged.InvokeAsync(Prompt);
+    }
+
+    private async Task StripLoras()
+    {
+        if (string.IsNullOrWhiteSpace(Prompt)) return;
+
+        // Remove <lora:...> tags and any surrounding whitespace/comma
+        string cleaned = Regex.Replace(Prompt, @"(?i)<lora:[^>]+>\s*,?\s*", string.Empty).Trim();
+        cleaned = CleanExtraCommas(cleaned);
+
+        Prompt = cleaned;
+        await OnPromptChanged.InvokeAsync(Prompt);
+    }
+
+    private async Task ClearPrompt()
+    {
+        Prompt = "";
+        await OnPromptChanged.InvokeAsync(Prompt);
+    }
+
+    private string CleanExtraCommas(string s)
+    {
+        var temp = Regex.Replace(s, @",\s*,", ", ");
+        temp = Regex.Replace(temp, @"^,+|,+$", string.Empty).Trim();
+        if (!string.IsNullOrEmpty(temp))
+        {
+            temp += ", ";
+        }
+        return temp;
+    }
+}

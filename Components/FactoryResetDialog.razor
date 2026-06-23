@@ -1,0 +1,36 @@
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6"><MudIcon Icon="@Icons.Material.Filled.RestartAlt" Class="mr-2 mb-n1" />Factory reset</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-2">
+            This resets all <b>app settings</b> to their defaults (server address, paths, feature toggles,
+            NSFW preferences, card sizes, API key, …). You'll need to refresh the page afterwards.
+        </MudText>
+        <MudAlert Severity="Severity.Success" Dense="true" Class="mb-3">
+            Your downloaded models and everything in the Gallery are never touched.
+        </MudAlert>
+
+        <MudText Typo="Typo.subtitle2" Class="mb-1">Also reset (optional):</MudText>
+        <MudCheckBox T="bool" @bind-Value="_resetFrequency" Dense="true" Label="Usage &amp; frequency tracking (tags + LoRAs)" />
+        <MudCheckBox T="bool" @bind-Value="_resetRatings" Dense="true" Label="Model rating overrides" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Error" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.RestartAlt" OnClick="Confirm">
+            Reset settings
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    private bool _resetFrequency;
+    private bool _resetRatings;
+
+    public sealed record Choice(bool ResetFrequency, bool ResetRatings);
+
+    private void Confirm() => MudDialog.Close(DialogResult.Ok(new Choice(_resetFrequency, _resetRatings)));
+    private void Cancel() => MudDialog.Cancel();
+}

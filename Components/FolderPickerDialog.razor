@@ -1,0 +1,123 @@
+@inject HttpClient Http
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@(FileMode ? Icons.Material.Filled.InsertDriveFile : Icons.Material.Filled.Folder)" Class="mr-2 mb-n1" />@Title
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTextField T="string" Value="@_current" ReadOnly="true" Variant="Variant.Outlined"
+                      Margin="Margin.Dense" Label="Current" Class="mb-2" />
+
+        <div style="display:flex; gap:8px;" class="mb-2">
+            <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.ArrowUpward"
+                       Disabled="@(_parent is null && string.IsNullOrEmpty(_current))"
+                       OnClick="GoUp">Up</MudButton>
+            <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="@(() => Load(_current))">Refresh</MudButton>
+        </div>
+
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Dense="true">@_error</MudAlert>
+        }
+
+        <MudPaper Outlined="true" Style="max-height: 320px; overflow-y: auto;">
+            <MudList T="string" Dense="true">
+                @foreach (var d in _dirs)
+                {
+                    <MudListItem T="string" Icon="@Icons.Material.Filled.Folder" OnClick="@(() => Load(d))">
+                        @System.IO.Path.GetFileName(d.TrimEnd('\\', '/'))@(string.IsNullOrEmpty(System.IO.Path.GetFileName(d.TrimEnd('\\','/'))) ? d : "")
+                    </MudListItem>
+                }
+
+                @if (FileMode)
+                {
+                    @foreach (var f in _files)
+                    {
+                        <MudListItem T="string" Icon="@Icons.Material.Filled.InsertDriveFile"
+                                     OnClick="@(() => MudDialog.Close(DialogResult.Ok(f)))">
+                            @System.IO.Path.GetFileName(f)
+                        </MudListItem>
+                    }
+                }
+
+                @if (_dirs.Count == 0 && (!FileMode || _files.Count == 0))
+                {
+                    <MudListItem T="string" Disabled="true">@(FileMode ? "(no matching files or sub-folders)" : "(no sub-folders)")</MudListItem>
+                }
+            </MudList>
+        </MudPaper>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => MudDialog.Cancel())">Cancel</MudButton>
+        @if (!FileMode)
+        {
+            <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                       Disabled="@string.IsNullOrEmpty(_current)"
+                       OnClick="@(() => MudDialog.Close(DialogResult.Ok(_current)))">
+                Select this folder
+            </MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public string? InitialPath { get; set; }
+
+    /// <summary>When set (e.g. "*.bat"), the picker lists matching files and returns a file path.</summary>
+    [Parameter] public string? FilePattern { get; set; }
+    [Parameter] public string Title { get; set; } = "Choose a folder";
+
+    private bool FileMode => !string.IsNullOrWhiteSpace(FilePattern);
+
+    private string _current = "";
+    private string? _parent;
+    private List<string> _dirs = new();
+    private List<string> _files = new();
+    private string? _error;
+
+    protected override async Task OnInitializedAsync() => await Load(InitialPath ?? "");
+
+    private async Task Load(string? path)
+    {
+        _error = null;
+        try
+        {
+            var url = "/civitai-list-dirs";
+            var query = new List<string>();
+            if (!string.IsNullOrEmpty(path)) query.Add("path=" + Uri.EscapeDataString(path));
+            if (FileMode) query.Add("pattern=" + Uri.EscapeDataString(FilePattern!));
+            if (query.Count > 0) url += "?" + string.Join("&", query);
+
+            var result = await Http.GetFromJsonAsync<DirListing>(url);
+            if (result is not null)
+            {
+                _current = result.current ?? "";
+                _parent = result.parent;
+                _dirs = result.dirs ?? new();
+                _files = result.files ?? new();
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        StateHasChanged();
+    }
+
+    private async Task GoUp()
+    {
+        // Up from a drive root goes to the drive list (empty path).
+        await Load(_parent ?? "");
+    }
+
+    private sealed class DirListing
+    {
+        public string? current { get; set; }
+        public string? parent { get; set; }
+        public List<string>? dirs { get; set; }
+        public List<string>? files { get; set; }
+    }
+}
