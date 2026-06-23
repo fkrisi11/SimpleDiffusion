@@ -91,11 +91,11 @@
     }
 
     private string BatchPath =>
-        Configuration["SdServerBatchPath"] ?? @"C:\ai\stable-diffusion-webui-reForge\webui-user.bat";
+        Configuration["SdServerBatchPath"] ?? @"";
 
     // The Gradio web UI is served at the same address as the API.
     private string ServerUrl =>
-        Configuration["SdServerAddress"] ?? "http://192.168.0.92:7860/";
+        Configuration["SdServerAddress"] ?? "http://localhost:7860/";
 
     private void Start()
     {
