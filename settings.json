@@ -1,0 +1,15 @@
+{
+  "SdServerAddress": "http://localhost:7860/",
+  "SdServerBatchPath": "",
+  "BaseLoraPath": "",
+  "TagPath": "wwwroot\\tags",
+  "SelectedDictionary": "All",
+  "CustomTagsFileName": "custom_tags.txt",
+  "EnableFrequencyTracking": "True",
+  "EnableFavorites": "True",
+  "EnableQuickTags": "True",
+  "EnableSuggestionRibbon": "True",
+  "EnableMobileNav": "True",
+  "MaxConcurrentDownloads": "4",
+  "MaxResultCacheMB": "2048"
+}

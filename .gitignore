@@ -366,7 +366,7 @@ FodyWeavers.xsd
 
 # ---- SimpleDiffusion: per-install / personal data (do not commit) ----
 # Machine-specific config: server IP, launch .bat path, LoRA/models/tag folders.
-settings.json
+#settings.json
 # Personal tag favourites + usage frequencies.
 tag_stats.json
 # Saved images.
