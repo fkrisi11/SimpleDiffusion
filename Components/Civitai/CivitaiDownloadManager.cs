@@ -118,9 +118,9 @@ public sealed class CivitaiDownloadManager
             _maxConcurrent = Math.Clamp(mc, 1, 16);
 
         // ModelsRoot defaults to the parent of the LoRA folder (the A1111 "models" dir).
-        var loraPath = config["BaseLoraPath"] ?? @"C:\ai\stable-diffusion-webui-reForge\models\Lora";
+        var loraPath = config["BaseLoraPath"] ?? @"";
         _modelsRoot = config["ModelsRoot"]
-            ?? Directory.GetParent(loraPath)?.FullName
+            ?? (Directory.Exists(loraPath) ? Directory.GetParent(loraPath)?.FullName : "")
             ?? loraPath;
     }
 
