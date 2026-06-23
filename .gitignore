@@ -362,6 +362,8 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 
+.claude/
+
 # ---- SimpleDiffusion: per-install / personal data (do not commit) ----
 # Machine-specific config: server IP, launch .bat path, LoRA/models/tag folders.
 settings.json
