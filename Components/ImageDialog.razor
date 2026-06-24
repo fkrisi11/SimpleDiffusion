@@ -559,7 +559,7 @@
     private async Task ShareImage()
     {
         if (CurrentImage is not { } cur || IsVideo(cur)) return;
-        var fileName = $"SD_{DateTime.Now:yyyyMMdd_HHmmss}_{SelectedIndex}.png";
+        var fileName = $"SD_{Stamp.File()}_{SelectedIndex}.png";
         try { await JS.InvokeVoidAsync("sdShare.shareImage", cur, fileName); } catch { }
     }
 
@@ -626,7 +626,7 @@
     {
         if (CurrentImage is not { } cur) return;
         try { await JS.InvokeVoidAsync("sdHaptic.buzz", 20); } catch { }
-        var fileName = $"SD_{DateTime.Now:yyyyMMdd_HHmmss}_{SelectedIndex}.png";
+        var fileName = $"SD_{Stamp.File()}_{SelectedIndex}.png";
         // The source is already a PNG, so never re-encode it (a 16k canvas re-encode is very slow and
         // can blow past canvas size limits). Stream the original file, or blob the base64 directly.
         if (cur.StartsWith("/") || cur.StartsWith("http"))
@@ -639,7 +639,7 @@
     {
         if (CurrentImage is not { } cur) return;
         try { await JS.InvokeVoidAsync("sdHaptic.buzz", 20); } catch { }
-        var fileName = $"SD_{DateTime.Now:yyyyMMdd_HHmmss}_{SelectedIndex}.jpg";
+        var fileName = $"SD_{Stamp.File()}_{SelectedIndex}.jpg";
         // Our own stored/result images convert server-side via libvips (fast, cached, no canvas size
         // limits). Base64 / remote sources fall back to the client-side canvas conversion.
         if (cur.StartsWith("/gallery/file", StringComparison.OrdinalIgnoreCase)
@@ -686,7 +686,7 @@
     {
         if (CurrentImage is not { } url) return;
         var ext = url.ToLowerInvariant().Contains(".webm") ? "webm" : "mp4";
-        var fileName = $"Video_{DateTime.Now:yyyyMMdd_HHmmss}_{SelectedIndex}.{ext}";
+        var fileName = $"Video_{Stamp.File()}_{SelectedIndex}.{ext}";
         await JS.InvokeVoidAsync("downloadUrl", url, fileName);
     }
 

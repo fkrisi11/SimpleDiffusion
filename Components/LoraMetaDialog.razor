@@ -832,7 +832,7 @@
 
             if (filesList.Any())
             {
-                var zipName = $"LoRA_{Lora?.name ?? "Preview"}_{DateTime.Now:yyyyMMdd_HHmmss}.zip";
+                var zipName = $"LoRA_{Lora?.name ?? "Preview"}_{Stamp.File()}.zip";
                 await JS.InvokeVoidAsync("downloadUrl", GalleryServer.BuildZipDownload(filesList), zipName);
             }
         }

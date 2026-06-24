@@ -190,7 +190,7 @@
     // each saved mask.
     private async Task DownloadZip(HistoryEntry entry)
     {
-        var stamp = entry.Timestamp.ToString("yyyyMMdd_HHmmss");
+        var stamp = Stamp.File(entry.Timestamp);
         var files = new List<(string, string)>();
 
         int n = 0;

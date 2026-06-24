@@ -91,11 +91,11 @@
     }
 
     private string BatchPath =>
-        Configuration["SdServerBatchPath"] ?? @"";
+        Configuration["SdServerBatchPath"] ?? "";
 
     // The Gradio web UI is served at the same address as the API.
     private string ServerUrl =>
-        Configuration["SdServerAddress"] ?? "http://localhost:7860/";
+        Configuration["SdServerAddress"] ?? "";
 
     private void Start()
     {

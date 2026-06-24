@@ -4,8 +4,12 @@ using SimpleDiffusion.Infrastructure;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
+// Create the data/ folder (and migrate any legacy root-level files) before anything reads it.
+SimpleDiffusion.Infrastructure.AppPaths.EnsureCreated();
+
 var builder = WebApplication.CreateBuilder(args);
-builder.Configuration.AddJsonFile("settings.json", optional: true, reloadOnChange: true);
+// User settings live in data/settings.json so a backup of the data folder captures them.
+builder.Configuration.AddJsonFile(SimpleDiffusion.Infrastructure.AppPaths.SettingsFile, optional: true, reloadOnChange: true);
 
 // libvips keeps an in-memory cache of recent operations (default ~100MB / 1000 ops). Our gallery
 // downscales are one-off and already cached on disk, so that cache just retains memory after a
@@ -27,7 +31,11 @@ SimpleDiffusion.Infrastructure.GalleryServer.ClearResultsOnStartup();
 
 builder.WebHost.ConfigureKestrel(serverOptions =>
 {
-    serverOptions.ListenAnyIP(5248); // HTTP on all interfaces (localhost + LAN)
+    // HTTP on all interfaces (localhost + LAN). Port is configurable via settings.json ("ServerPort");
+    // an absent/invalid/out-of-range value falls back to the default 5248.
+    var port = int.TryParse(builder.Configuration["ServerPort"], out var p) && p is > 0 and <= 65535
+        ? p : 5248;
+    serverOptions.ListenAnyIP(port);
     // HTTPS disabled for LAN-only use. Re-enable the line below if you ever need TLS.
     // serverOptions.ListenAnyIP(7166, listenOptions => listenOptions.UseHttps());
 });

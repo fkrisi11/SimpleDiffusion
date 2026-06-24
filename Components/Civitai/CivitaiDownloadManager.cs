@@ -117,11 +117,13 @@ public sealed class CivitaiDownloadManager
         if (int.TryParse(config["MaxConcurrentDownloads"], out var mc))
             _maxConcurrent = Math.Clamp(mc, 1, 16);
 
-        // ModelsRoot defaults to the parent of the LoRA folder (the A1111 "models" dir).
-        var loraPath = config["BaseLoraPath"] ?? @"";
-        _modelsRoot = config["ModelsRoot"]
-            ?? (Directory.Exists(loraPath) ? Directory.GetParent(loraPath)?.FullName : "")
-            ?? loraPath;
+        // ModelsRoot defaults to the parent of the LoRA folder (the A1111 "models" dir). Both paths
+        // are empty until the user configures them, so guard against empty (Directory.GetParent("")
+        // throws). Downloads simply have nowhere to go until a models root / LoRA path is set.
+        var loraPath = config["BaseLoraPath"] ?? "";
+        _modelsRoot = config["ModelsRoot"] is { Length: > 0 } mr
+            ? mr
+            : (!string.IsNullOrWhiteSpace(loraPath) ? Directory.GetParent(loraPath)?.FullName ?? loraPath : "");
     }
 
     /// <summary>All downloads this session, newest first (active + history).</summary>
@@ -837,7 +839,7 @@ public sealed class CivitaiDownloadManager
         }
         var published = version.PublishedAt ?? version.CreatedAt;
         if (published is { } pub)
-            sb.Append($"<tr><th>Published</th><td>{pub:yyyy-MM-dd}</td></tr>");
+            sb.Append($"<tr><th>Published</th><td>{SimpleDiffusion.Infrastructure.Stamp.Date(pub)}</td></tr>");
         if (version.TrainedWords.Count > 0)
             sb.Append($"<tr><th>Trigger words</th><td>{H(string.Join(", ", version.TrainedWords))}</td></tr>");
         sb.Append("</table>");

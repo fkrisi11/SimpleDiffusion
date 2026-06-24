@@ -9,7 +9,7 @@ namespace SimpleDiffusion.Components.Services;
 /// </summary>
 public sealed class TagGroupService
 {
-    private static string FilePath => Path.Combine(Directory.GetCurrentDirectory(), "tag_groups.json");
+    private static string FilePath => SimpleDiffusion.Infrastructure.AppPaths.TagGroupsFile;
     private bool _loaded;
 
     public List<TagGroup> Groups { get; private set; } = new();

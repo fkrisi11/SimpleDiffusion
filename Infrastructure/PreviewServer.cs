@@ -10,7 +10,8 @@ public static class LoraPreviewEndpoints
     {
         app.MapGet("/lora-preview", (string loraPath, IConfiguration cfg) =>
         {
-            var basePath = cfg["BaseLoraPath"] ?? @"C:\ai\stable-diffusion-webui-reForge\models\Lora";
+            var basePath = cfg["BaseLoraPath"] ?? "";
+            if (string.IsNullOrWhiteSpace(basePath)) return Results.NotFound();
 
             var fullLora = Path.GetFullPath(loraPath);
             var root = Path.GetFullPath(basePath);
@@ -33,7 +34,8 @@ public static class LoraPreviewEndpoints
 
         app.MapGet("/lora-previews", (string loraPath, IConfiguration cfg) =>
         {
-            var basePath = cfg["BaseLoraPath"] ?? @"C:\ai\stable-diffusion-webui-reForge\models\Lora";
+            var basePath = cfg["BaseLoraPath"] ?? "";
+            if (string.IsNullOrWhiteSpace(basePath)) return Results.NotFound();
             var fullLora = Path.GetFullPath(loraPath);
             var root = Path.GetFullPath(basePath);
 
@@ -79,7 +81,8 @@ public static class LoraPreviewEndpoints
 
         app.MapGet("/lora-preview-file", (string filePath, IConfiguration cfg) =>
         {
-            var basePath = cfg["BaseLoraPath"] ?? @"C:\ai\stable-diffusion-webui-reForge\models\Lora";
+            var basePath = cfg["BaseLoraPath"] ?? "";
+            if (string.IsNullOrWhiteSpace(basePath)) return Results.NotFound();
 
             var full = Path.GetFullPath(filePath);
             var root = Path.GetFullPath(basePath);

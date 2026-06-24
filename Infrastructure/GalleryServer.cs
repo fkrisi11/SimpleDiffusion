@@ -33,10 +33,10 @@ public sealed class GalleryOverviewDto
 /// </summary>
 public static class GalleryServer
 {
-    private static string Root => Path.Combine(Directory.GetCurrentDirectory(), "gallery");
+    private static string Root => AppPaths.GalleryDir;
 
     // One reusable name for "save the file as" — sortable, unique-ish, .png only.
-    private static string NewFileName() => $"SD_{DateTime.Now:yyyyMMdd_HHmmss_fff}.png";
+    private static string NewFileName() => $"SD_{Stamp.FileMs()}.png";
 
     /// <summary>A single safe path segment (album or file name) — rejects separators / traversal.</summary>
     private static string? SafeSegment(string? s)
@@ -336,7 +336,7 @@ public static class GalleryServer
             catch { return Results.BadRequest("Bad base64."); }
 
             // Stamp the save time into a new tEXt chunk (existing chunks/params are left intact).
-            try { bytes = SimpleDiffusion.Components.PngMetadata.AddTextChunk(bytes, "Creation Time", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")); }
+            try { bytes = SimpleDiffusion.Components.PngMetadata.AddTextChunk(bytes, "Creation Time", Stamp.Meta()); }
             catch { }
 
             var dir = AlbumDir(a);
@@ -428,7 +428,7 @@ public static class GalleryServer
     }
 
     // Derived display tiers live OUTSIDE the gallery folder so they're never listed as albums.
-    private static string TierCacheRoot => Path.Combine(Directory.GetCurrentDirectory(), "gallery-cache");
+    private static string TierCacheRoot => AppPaths.GalleryCacheDir;
 
     // Hard ceiling for any tier — clamps client requests so a bad value can't ask for a gigantic
     // re-encode. The fit view requests a device-sized width (≤2048); the on-zoom detail tier (phase 2)
@@ -573,7 +573,7 @@ public static class GalleryServer
     // ---- Ephemeral result store (#5): upscale/generation outputs live on disk, referenced by id,
     // so the full (up to 16k) base64 is neither held in server memory nor shipped to the client.
     // Originals are the source for the on-the-fly display tiers; cleared on startup (new session). ----
-    private static string ResultsDir => Path.Combine(Directory.GetCurrentDirectory(), "results-cache");
+    private static string ResultsDir => AppPaths.ResultsCacheDir;
 
     // Cap on the result store. Originals are the source for tiers/save/download, so unlike tiers they
     // can't be cheaply regenerated — but a long session of huge (16k) outputs shouldn't fill the disk.
@@ -604,7 +604,7 @@ public static class GalleryServer
         // Stamp when this image was produced, so the viewer can show a generation timestamp. It's
         // embedded in the PNG, so it survives the verbatim copy into the gallery (where the separate
         // "Creation Time" stamp records the later save time).
-        try { bytes = SimpleDiffusion.Components.PngMetadata.AddTextChunk(bytes, "Generation Time", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")); }
+        try { bytes = SimpleDiffusion.Components.PngMetadata.AddTextChunk(bytes, "Generation Time", Stamp.Meta()); }
         catch { }
         Directory.CreateDirectory(ResultsDir);
         var id = Guid.NewGuid().ToString("N");

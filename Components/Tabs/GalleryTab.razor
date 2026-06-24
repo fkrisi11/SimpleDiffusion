@@ -321,7 +321,7 @@
         }
         if (files.Count == 0) { Snackbar.Add("Couldn't read the selected images.", Severity.Error); return; }
 
-        var zipName = $"gallery_{(_album ?? "unsorted")}_{DateTime.Now:yyyyMMdd_HHmmss}.zip";
+        var zipName = $"gallery_{(_album ?? "unsorted")}_{Stamp.File()}.zip";
         await JS.InvokeVoidAsync("downloadUrl", GalleryServer.BuildZipDownload(files), zipName);
     }
 

@@ -210,7 +210,7 @@
             ? new List<string> { "welcome", "server", "civitai", "content" }
             : new List<string> { "welcome", "civitai", "content" };
 
-        _serverAddress = Configuration["SdServerAddress"] ?? "http://127.0.0.1:7860/";
+        _serverAddress = Configuration["SdServerAddress"] ?? "";
         _batchPath = Configuration["SdServerBatchPath"] ?? "";
         _loraPath = Configuration["BaseLoraPath"] ?? "";
         _modelsRoot = Configuration["ModelsRoot"] ?? "";
@@ -264,7 +264,7 @@
         {
             try
             {
-                var path = Path.Combine(Directory.GetCurrentDirectory(), "settings.json");
+                var path = SimpleDiffusion.Infrastructure.AppPaths.SettingsFile;
                 Dictionary<string, string> data;
                 try
                 {
@@ -279,7 +279,7 @@
                 data["BaseLoraPath"] = _loraPath.Trim();
                 data["ModelsRoot"] = _modelsRoot.Trim();
                 if (!data.ContainsKey("TagPath"))
-                    data["TagPath"] = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "tags");
+                    data["TagPath"] = SimpleDiffusion.Infrastructure.AppPaths.DefaultTagPath;
 
                 var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
                 await File.WriteAllTextAsync(path, json);

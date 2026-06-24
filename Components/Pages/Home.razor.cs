@@ -14,9 +14,9 @@ namespace SimpleDiffusion.Components.Pages
         // which would otherwise drop the request mid-render.
         static readonly TimeSpan SdHttpTimeout = TimeSpan.FromHours(1);
         HttpClient _httpClient = new HttpClient { Timeout = SdHttpTimeout };
-        string SD_ServerAddress = "http://192.168.0.92:7860/";
-        string LoraPath = @"C:\ai\stable-diffusion-webui-reForge\models\Lora";
-        string TagPath = @"C:\Users\Tohru\Documents\Visual Studio 2022\Projects\SimpleDiffusion\wwwroot\tags";
+        string SD_ServerAddress = "";
+        string LoraPath = "";
+        string TagPath = "";
         List<SdModel> Models = new List<SdModel>();
         List<SdSampler> Samplers = new List<SdSampler>();
         List<UpscalerInfo> Upscalers = new List<UpscalerInfo>();
@@ -309,9 +309,12 @@ namespace SimpleDiffusion.Components.Pages
 
         private async Task LoadWorkspaceAsync()
         {
-            SD_ServerAddress = Configuration["SdServerAddress"] ?? "http://192.168.0.92:7860/";
-            LoraPath = Configuration["BaseLoraPath"] ?? @"C:\ai\stable-diffusion-webui-reForge\models\Lora";
-            TagPath = Configuration["TagPath"] ?? @"C:\Users\Tohru\Documents\Visual Studio 2022\Projects\SimpleDiffusion\wwwroot\tags";
+            SD_ServerAddress = Configuration["SdServerAddress"] ?? "";
+            LoraPath = Configuration["BaseLoraPath"] ?? "";
+            // Tags are the one exception: empty/absent falls back to the bundled tag dictionaries.
+            TagPath = string.IsNullOrWhiteSpace(Configuration["TagPath"])
+                ? AppPaths.DefaultTagPath
+                : Configuration["TagPath"]!;
 
             _enableFrequency = Configuration.Flag("EnableFrequencyTracking");
             _enableFavorites = Configuration.Flag("EnableFavorites");
@@ -322,14 +325,22 @@ namespace SimpleDiffusion.Components.Pages
 
             // Recreate the client: BaseAddress can't be changed once a client has sent requests,
             // and this method now also runs on settings save (when the address may have changed).
+            // With no server address configured yet, leave the client without a BaseAddress and stay
+            // offline — new Uri("") would throw, and there's nothing to connect to.
             var oldClient = _httpClient;
-            _httpClient = new HttpClient { BaseAddress = new Uri(SD_ServerAddress), Timeout = SdHttpTimeout };
+            _httpClient = string.IsNullOrWhiteSpace(SD_ServerAddress)
+                ? new HttpClient { Timeout = SdHttpTimeout }
+                : new HttpClient { BaseAddress = new Uri(SD_ServerAddress), Timeout = SdHttpTimeout };
             oldClient?.Dispose();
 
-            // Server-dependent data: only available when the SD API is reachable.
-            if (await TryConnect())
+            // Server-dependent data: only available when a server is configured and reachable.
+            if (!string.IsNullOrWhiteSpace(SD_ServerAddress) && await TryConnect())
             {
                 await ReloadServerDataAsync();
+            }
+            else
+            {
+                offline = true;
             }
 
             // File-based data (tags, LoRAs, presets) comes from the local filesystem — always load
@@ -702,7 +713,7 @@ namespace SimpleDiffusion.Components.Pages
         {
             try
             {
-                var path = Path.Combine(Directory.GetCurrentDirectory(), "presets.json");
+                var path = AppPaths.PresetsFile;
                 if (File.Exists(path))
                 {
                     var json = File.ReadAllText(path);
@@ -719,7 +730,7 @@ namespace SimpleDiffusion.Components.Pages
         {
             try
             {
-                var path = Path.Combine(Directory.GetCurrentDirectory(), "presets.json");
+                var path = AppPaths.PresetsFile;
                 var json = JsonSerializer.Serialize(Presets, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(path, json);
             }

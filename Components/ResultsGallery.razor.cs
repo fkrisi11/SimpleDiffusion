@@ -262,7 +262,7 @@ namespace SimpleDiffusion.Components
             if (!_finalImages.Any()) return;
 
             // Pull each result's bytes from the store only now (on explicit download).
-            var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            var stamp = Stamp.File();
             var files = new List<(string, string)>();
             for (int i = 0; i < _finalImages.Count; i++)
             {

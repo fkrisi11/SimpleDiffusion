@@ -356,7 +356,7 @@ namespace SimpleDiffusion.Components
             try { mask = await JS.InvokeAsync<string?>("sdMask.getMask", _maskCanvas, _initImage.Width, _initImage.Height, _invertMask, 0); }
             catch { }
             if (string.IsNullOrEmpty(mask)) { Snackbar.Add("Nothing painted yet — paint a mask first.", Severity.Info); return; }
-            var fileName = $"mask_{DateTime.Now:yyyyMMdd_HHmmss}.png";
+            var fileName = $"mask_{Stamp.File()}.png";
             try { await JS.InvokeVoidAsync("sdDownloadBase64", mask, "image/png", fileName); } catch { }
         }
 
@@ -979,7 +979,7 @@ namespace SimpleDiffusion.Components
         {
             if (!_finalImages.Any()) return;
 
-            var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            var stamp = Stamp.File();
             var files = new List<(string, string)>();
             for (int i = 0; i < _finalImages.Count; i++)
             {

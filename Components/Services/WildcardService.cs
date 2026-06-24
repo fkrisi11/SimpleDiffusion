@@ -10,7 +10,7 @@ namespace SimpleDiffusion.Components.Services;
 /// </summary>
 public sealed class WildcardService
 {
-    private static string Dir => Path.Combine(Directory.GetCurrentDirectory(), "wildcards");
+    private static string Dir => SimpleDiffusion.Infrastructure.AppPaths.WildcardsDir;
     private readonly ConcurrentDictionary<string, (DateTime Mtime, string[] Lines)> _cache = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Options for a wildcard name, or null if there is no such wildcard.</summary>

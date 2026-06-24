@@ -678,10 +678,13 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _sdServerAddress = Configuration["SdServerAddress"] ?? "http://192.168.0.92:7860/";
-        _sdServerBatchPath = Configuration["SdServerBatchPath"] ?? @"C:\ai\stable-diffusion-webui-reForge\webui-user.bat";
-        _loraPath = Configuration["BaseLoraPath"] ?? @"C:\ai\stable-diffusion-webui-reForge\models\Lora";
-        _tagPath = Configuration["TagPath"] ?? @"C:\Users\Tohru\Documents\Visual Studio 2022\Projects\SimpleDiffusion\wwwroot\tags";
+        _sdServerAddress = Configuration["SdServerAddress"] ?? "";
+        _sdServerBatchPath = Configuration["SdServerBatchPath"] ?? "";
+        _loraPath = Configuration["BaseLoraPath"] ?? "";
+        // Tags are the one exception: empty/absent falls back to the bundled tag dictionaries.
+        _tagPath = string.IsNullOrWhiteSpace(Configuration["TagPath"])
+            ? SimpleDiffusion.Infrastructure.AppPaths.DefaultTagPath
+            : Configuration["TagPath"]!;
         _modelsRoot = Configuration["ModelsRoot"] ?? "";
         _selectedDictionary = Configuration["SelectedDictionary"] ?? "All";
         _selectedDictionaries = (_selectedDictionary)
@@ -780,19 +783,17 @@
 
     private async Task LoadQuickTagsContent()
     {
-        var cleanTagPath = _tagPath.Trim();
-        if (Directory.Exists(cleanTagPath))
+        // Quick tags live in the data folder (backup-able), independent of the tag dictionary path.
+        try
         {
-            try
+            var path = SimpleDiffusion.Infrastructure.AppPaths.QuickTagsFile;
+            if (File.Exists(path))
             {
-                var path = Path.Combine(cleanTagPath, "quick_tags.txt");
-                if (File.Exists(path))
-                {
-                    _quickTagsContent = await File.ReadAllTextAsync(path);
-                }
-                else
-                {
-                    _quickTagsContent = @"[Quality & Style]
+                _quickTagsContent = await File.ReadAllTextAsync(path);
+            }
+            else
+            {
+                _quickTagsContent = @"[Quality & Style]
 masterpiece, best quality, highly detailed, photorealistic, illustration, anime, digital art, concept art, oil painting, sketch
 
 [Subject & Layout]
@@ -800,12 +801,11 @@ masterpiece, best quality, highly detailed, photorealistic, illustration, anime,
 
 [Environment & Lighting]
 outdoors, indoors, night, day, studio lighting, dramatic lighting, cinematic lighting, sunset, sky";
-                }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error loading quick tags: {ex.Message}");
-            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading quick tags: {ex.Message}");
         }
     }
 
@@ -849,7 +849,7 @@ outdoors, indoors, night, day, studio lighting, dramatic lighting, cinematic lig
         if (res is null || res.Canceled || res.Data is not FactoryResetDialog.Choice choice) return;
 
         // 1) App settings file -> back to code defaults on next load.
-        try { var p = Path.Combine(Directory.GetCurrentDirectory(), "settings.json"); if (File.Exists(p)) File.Delete(p); }
+        try { var p = SimpleDiffusion.Infrastructure.AppPaths.SettingsFile; if (File.Exists(p)) File.Delete(p); }
         catch (Exception ex) { Snackbar.Add("Couldn't reset settings.json: " + ex.Message, Severity.Error); }
 
         // 2) Per-device settings (localStorage), optionally clearing rating overrides.
@@ -993,8 +993,8 @@ outdoors, indoors, night, day, studio lighting, dramatic lighting, cinematic lig
             // Sync visual editors to raw text before saving
             SyncVisualToRaw();
 
-            // Save settings.json
-            var path = Path.Combine(Directory.GetCurrentDirectory(), "settings.json");
+            // Save settings.json (in the data folder so a backup of data/ captures it).
+            var path = SimpleDiffusion.Infrastructure.AppPaths.SettingsFile;
             var data = new Dictionary<string, string>
             {
                 ["SdServerAddress"] = cleanSd,
@@ -1016,6 +1016,9 @@ outdoors, indoors, night, day, studio lighting, dramatic lighting, cinematic lig
             else if (Configuration["ModelsRoot"] is { Length: > 0 } mr) data["ModelsRoot"] = mr;
             data["MaxConcurrentDownloads"] = Math.Clamp(_maxConcurrent, 1, 16).ToString();
             data["MaxResultCacheMB"] = Math.Max(256, _maxResultCacheMb).ToString();
+            // Listen port has no UI field (it's a restart-required host setting) — preserve any
+            // existing value so a Save here doesn't drop it from settings.json.
+            if (Configuration["ServerPort"] is { Length: > 0 } sp) data["ServerPort"] = sp;
 
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
             await File.WriteAllTextAsync(path, json);
@@ -1046,12 +1049,8 @@ outdoors, indoors, night, day, studio lighting, dramatic lighting, cinematic lig
                 await File.WriteAllTextAsync(customPath, _customTagsContent ?? "");
             }
 
-            // Save quick_tags.txt
-            if (Directory.Exists(cleanTag))
-            {
-                var quickTagsPath = Path.Combine(cleanTag, "quick_tags.txt");
-                await File.WriteAllTextAsync(quickTagsPath, _quickTagsContent ?? "");
-            }
+            // Save quick_tags.txt to the data folder (always — independent of the tag dictionary path).
+            await File.WriteAllTextAsync(SimpleDiffusion.Infrastructure.AppPaths.QuickTagsFile, _quickTagsContent ?? "");
 
             // Save favorites list
             var favList = (_favoritesContent ?? "")

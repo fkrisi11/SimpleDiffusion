@@ -85,7 +85,9 @@ namespace SimpleDiffusion.Components.Services
                     foreach (var d in dicts) await LoadTags(tagFolder, d, customFileName);
 
                 await LoadCustomTags(tagFolder, customFileName);
-                await LoadQuickTags(tagFolder);
+                // Quick tags are user-editable and live in the backup-able data folder, not the
+                // (app-held) tag dictionary folder.
+                await LoadQuickTags(SimpleDiffusion.Infrastructure.AppPaths.DataRoot);
                 await LoadLoras(loraFolder);
                 BuildIndexes(); // also builds the alias index
                 LoadColorConfig(Path.Combine(tagFolder, "color_config.json"));
@@ -513,7 +515,7 @@ namespace SimpleDiffusion.Components.Services
 
         private string GetStatsFilePath()
         {
-            return Path.Combine(Directory.GetCurrentDirectory(), "tag_stats.json");
+            return SimpleDiffusion.Infrastructure.AppPaths.TagStatsFile;
         }
 
         public void LoadStats()

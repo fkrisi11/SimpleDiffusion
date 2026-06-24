@@ -10,8 +10,15 @@
          after image conversions). Concurrent keeps collections from pausing the UI. -->
     <ServerGarbageCollection>false</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
-    <ApplicationIcon>wwwroot\favicon.ico</ApplicationIcon>
+    <ApplicationIcon>favicon.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="data\quick_tags.txt" />
+    <Content Include="favicon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 
   <ItemGroup>
     <None Include="wwwroot\MudBlazorResources\FontFaces\cyrillic-ext.woff2" />
@@ -35,6 +42,8 @@
 
 
   <ItemGroup>
+    <Folder Include="data\gallery\" />
+    <Folder Include="data\wildcards\" />
     <Folder Include="wwwroot\icons\" />
   </ItemGroup>
 </Project>

@@ -9,7 +9,7 @@ namespace SimpleDiffusion.Components.Services;
 /// </summary>
 public sealed class LoraStatsService
 {
-    private static string FilePath => Path.Combine(Directory.GetCurrentDirectory(), "lora_stats.json");
+    private static string FilePath => SimpleDiffusion.Infrastructure.AppPaths.LoraStatsFile;
     private readonly object _gate = new();
     private bool _loaded;
 

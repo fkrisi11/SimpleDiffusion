@@ -518,7 +518,7 @@
 
     private async Task Download(UpResult r, int groupIndex)
     {
-        var fileName = $"SD_upscaled_{groupIndex + 1}_{r.Upscaler}_{DateTime.Now:yyyyMMdd_HHmmss}.png";
+        var fileName = $"SD_upscaled_{groupIndex + 1}_{r.Upscaler}_{Stamp.File()}.png";
         // Download the full-res original straight from the store URL — no base64 round-trip to the client.
         try { await JS.InvokeVoidAsync("downloadUrl", $"/results/file?id={r.Id}", fileName); } catch { }
     }
@@ -533,7 +533,7 @@
     {
         // Pull each result's bytes from the store only now (on explicit download) rather than holding
         // them all in memory the whole time.
-        var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        var stamp = Stamp.File();
         var files = new List<(string, string)>();
         int n = 0;
         for (int gi = 0; gi < _groups.Count; gi++)
