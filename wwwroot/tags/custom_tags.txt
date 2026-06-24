@@ -1,0 +1,5 @@
+# Define your custom tags here, one per line.
+# Format:
+# tag_name
+# tag_name,category
+# tag_name,category,count

@@ -363,17 +363,4 @@ MigrationBackup/
 FodyWeavers.xsd
 
 .claude/
-
-# ---- SimpleDiffusion: per-install / personal data (do not commit) ----
-# Machine-specific config: server IP, launch .bat path, LoRA/models/tag folders.
-settings.json
-# Personal tag favourites + usage frequencies.
-tag_stats.json
-# Saved images.
-gallery/
-# Derived display tiers (downscaled JPEGs) for the fullscreen viewer — regenerated on demand.
-gallery-cache/
-results-cache/
 # User-customized tag lists (remove these two lines if you want to ship default lists).
-wwwroot/tags/custom_tags.txt
-wwwroot/tags/quick_tags.txt
