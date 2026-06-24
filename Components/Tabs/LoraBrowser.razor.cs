@@ -27,6 +27,10 @@ namespace SimpleDiffusion.Components.Tabs
         [Parameter] public EventCallback<string> OnTagSelected { get; set; }
         [Parameter] public HttpClient SdHttpClient { get; set; } = default!;
 
+        /// <summary>Raised after the refresh button re-scans models from disk, so the host can refresh
+        /// server-derived lists too (e.g. the VAE dropdown).</summary>
+        [Parameter] public EventCallback OnModelsRefreshed { get; set; }
+
         [Inject] private IJSRuntime JS { get; set; } = default!;
 
         // ===== Internal state =====
@@ -771,6 +775,10 @@ namespace SimpleDiffusion.Components.Tabs
             await LoadFromDiskAsync();
             if (_virtualize != null)
                 await _virtualize.RefreshDataAsync();
+
+            // Let the host re-pull server-derived lists from disk too (VAE dropdown).
+            if (OnModelsRefreshed.HasDelegate)
+                await OnModelsRefreshed.InvokeAsync();
         }
 
         bool _foldersOpen = false;

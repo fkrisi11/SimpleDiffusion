@@ -620,7 +620,11 @@ namespace SimpleDiffusion.Components
                 try { cnMask = await JS.InvokeAsync<string?>("sdMask.getMask", _maskCanvas, _initImage.Width, _initImage.Height, _invertMask, MaskMaxEdge); } catch { }
             }
             foreach (var u in _cnUnits) u.MaskB64 = u.UsePaintedMask ? cnMask : null;
-            localRequest.alwayson_scripts = ControlNetUnit.BuildAlwaysOn(_cnUnits.ToArray());
+            // ControlNet units + NeverOOM (reForge memory-safety), merged into one alwayson_scripts.
+            localRequest.alwayson_scripts = NeverOom.Merge(
+                ControlNetUnit.BuildAlwaysOn(_cnUnits.ToArray()),
+                Configuration.Flag("NeverOomUnet", false), Configuration.Flag("NeverOomVae", false),
+                NeverOom.EncoderTile(Configuration), NeverOom.DecoderTile(Configuration));
 
             var runIds = new List<string>(); // this run's result ids, recorded to history when it finishes
 

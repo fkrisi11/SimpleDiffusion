@@ -198,6 +198,33 @@
 
                 <div>
                     <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);" Class="mb-2">
+                        GPU Memory (NeverOOM)
+                    </MudText>
+                    <MudText Typo="Typo.body2" Class="mb-3" Style="opacity: 0.7;">
+                        reForge memory-safety modes, applied to Txt2Img and Img2Img generations. Turn these on if you hit
+                        out-of-memory (OOM) errors — they trade speed for much lower VRAM use. (No effect on the Upscale tab.)
+                    </MudText>
+                    <div class="d-flex flex-column gap-3 mb-4">
+                        <MudSwitch T="bool" @bind-Value="_neverOomUnet" Color="Color.Warning"
+                                   Label="UNet: always maximize offload (avoids OOM during diffusion)" />
+                        <MudSwitch T="bool" @bind-Value="_neverOomVae" Color="Color.Warning"
+                                   Label="VAE: always tiled decode (avoids OOM when decoding large images)" />
+                        @* VAE tile sizes — only take effect when VAE tiling is on. Smaller = less VRAM, more seams/slower. *@
+                        <div class="px-1" style="@(_neverOomVae ? "" : "opacity:0.5;")">
+                            <MudText Typo="Typo.body2" Class="mt-1">Encoder tile size: <b>@_neverOomEncoderTile</b> (@NeverOom.EncoderTileMin–@NeverOom.EncoderTileMax)</MudText>
+                            <MudSlider T="int" @bind-Value="_neverOomEncoderTile" Min="@NeverOom.EncoderTileMin" Max="@NeverOom.EncoderTileMax"
+                                       Step="@NeverOom.TileStep" Color="Color.Warning" Disabled="@(!_neverOomVae)" />
+                            <MudText Typo="Typo.body2" Class="mt-2">Decoder tile size: <b>@_neverOomDecoderTile</b> (@NeverOom.DecoderTileMin–@NeverOom.DecoderTileMax)</MudText>
+                            <MudSlider T="int" @bind-Value="_neverOomDecoderTile" Min="@NeverOom.DecoderTileMin" Max="@NeverOom.DecoderTileMax"
+                                       Step="@NeverOom.TileStep" Color="Color.Warning" Disabled="@(!_neverOomVae)" />
+                        </div>
+                    </div>
+                </div>
+
+                <MudDivider Class="my-4" style="opacity: 0.15;" />
+
+                <div>
+                    <MudText Typo="Typo.subtitle1" Style="font-weight: 700; color: var(--mud-palette-text-primary);" Class="mb-2">
                         Result Image Cache
                     </MudText>
                     <MudNumericField T="int" @bind-Value="_maxResultCacheMb" Label="Max cache size (MB)" Min="256" Max="200000" Step="256"
@@ -575,6 +602,10 @@
     private bool _enableFrequencyTracking = true;
     private bool _enableFavorites = true;
     private bool _enableQuickTags = true;
+    private bool _neverOomUnet;   // reForge NeverOOM: maximize UNet offload
+    private bool _neverOomVae;    // reForge NeverOOM: always tiled VAE decode
+    private int _neverOomEncoderTile = NeverOom.DefaultEncoderTile;
+    private int _neverOomDecoderTile = NeverOom.DefaultDecoderTile;
 
     // Mobile experience features (each defaults on; they only surface where relevant).
     private bool _enableSuggestionRibbon = true;
@@ -696,6 +727,10 @@
         _enableFrequencyTracking = Configuration.Flag("EnableFrequencyTracking");
         _enableFavorites = Configuration.Flag("EnableFavorites");
         _enableQuickTags = Configuration.Flag("EnableQuickTags");
+        _neverOomUnet = Configuration.Flag("NeverOomUnet", false);
+        _neverOomVae = Configuration.Flag("NeverOomVae", false);
+        _neverOomEncoderTile = NeverOom.EncoderTile(Configuration);
+        _neverOomDecoderTile = NeverOom.DecoderTile(Configuration);
 
         _enableSuggestionRibbon = Configuration.Flag("EnableSuggestionRibbon");
         _enableMobileNav = Configuration.Flag("EnableMobileNav");
@@ -1016,6 +1051,10 @@ outdoors, indoors, night, day, studio lighting, dramatic lighting, cinematic lig
             else if (Configuration["ModelsRoot"] is { Length: > 0 } mr) data["ModelsRoot"] = mr;
             data["MaxConcurrentDownloads"] = Math.Clamp(_maxConcurrent, 1, 16).ToString();
             data["MaxResultCacheMB"] = Math.Max(256, _maxResultCacheMb).ToString();
+            data["NeverOomUnet"] = _neverOomUnet.ToString();
+            data["NeverOomVae"] = _neverOomVae.ToString();
+            data["NeverOomEncoderTile"] = NeverOom.ClampEncoder(_neverOomEncoderTile).ToString();
+            data["NeverOomDecoderTile"] = NeverOom.ClampDecoder(_neverOomDecoderTile).ToString();
             // Listen port has no UI field (it's a restart-required host setting) — preserve any
             // existing value so a Save here doesn't drop it from settings.json.
             if (Configuration["ServerPort"] is { Length: > 0 } sp) data["ServerPort"] = sp;

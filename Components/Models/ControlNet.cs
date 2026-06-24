@@ -65,10 +65,12 @@ namespace SimpleDiffusion.Components.Models
         /// Build the <c>alwayson_scripts</c> object for a request from the active units, or null when
         /// none are active (so the request serializes exactly as before — no ControlNet key).
         /// </summary>
-        public static object? BuildAlwaysOn(params ControlNetUnit[] units)
+        public static Dictionary<string, object>? BuildAlwaysOn(params ControlNetUnit[] units)
         {
             var args = units.Where(u => u.IsActive).Select(u => u.ToArg()).ToList();
-            return args.Count == 0 ? null : new { controlnet = new { args } };
+            // A Dictionary (rather than an anonymous object) so other always-on scripts — e.g. NeverOOM
+            // — can be merged in. It serializes identically: { "controlnet": { "args": [...] } }.
+            return args.Count == 0 ? null : new Dictionary<string, object> { ["controlnet"] = new { args } };
         }
     }
 

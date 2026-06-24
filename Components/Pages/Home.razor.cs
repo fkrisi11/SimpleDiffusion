@@ -69,6 +69,13 @@ namespace SimpleDiffusion.Components.Pages
 
         public string _selectedModel = "";
         bool _loadingModel = false;
+
+        // VAE override. Selecting one sets the server's active VAE (sdapi/v1/options → sd_vae), exactly
+        // like the checkpoint, so generations pick it up with no per-request changes. "Automatic" and
+        // "None" are special values the API understands; the rest come from sdapi/v1/sd-vae.
+        List<string> Vaes = new() { "Automatic", "None" };
+        string _selectedVae = "Automatic";
+        bool _loadingVae = false;
         ResultsGallery resultsGallery;
         AbComparePanel abPanel;
         Img2ImgPanel img2imgPanel;
@@ -367,6 +374,8 @@ namespace SimpleDiffusion.Components.Pages
             await GetSamplersAsync();
             await GetUpscalersAsync();
             await GetSchedulersAsync();
+            await GetVaesAsync();
+            _selectedVae = await GetCurrentVaeAsync();
         }
 
         public async Task<bool> TryConnect()
@@ -449,6 +458,67 @@ namespace SimpleDiffusion.Components.Pages
                 _loadingModel = false;
                 StateHasChanged();
             }
+        }
+
+        // ----- VAE selection (mirrors the checkpoint handling above) -----
+
+        public async Task GetVaesAsync()
+        {
+            try
+            {
+                var items = await _httpClient.GetFromJsonAsync<List<SdVaeItem>>("sdapi/v1/sd-vae");
+                var list = new List<string> { "Automatic", "None" };
+                if (items != null)
+                    list.AddRange(items.Select(v => v.model_name).Where(n => !string.IsNullOrWhiteSpace(n)));
+                Vaes = list;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error fetching VAEs: {ex.Message}");
+            }
+        }
+
+        public async Task<string> GetCurrentVaeAsync()
+        {
+            try
+            {
+                var options = await _httpClient.GetFromJsonAsync<Dictionary<string, object>>("sdapi/v1/options");
+                if (options != null && options.TryGetValue("sd_vae", out var vae))
+                    return vae?.ToString() ?? "Automatic";
+            }
+            catch (Exception ex) { Console.WriteLine($"Error fetching current VAE: {ex.Message}"); }
+            return "Automatic";
+        }
+
+        public async Task<bool> SetVaeAsync(string vae)
+        {
+            var payload = new { sd_vae = vae };
+            var response = await _httpClient.PostAsJsonAsync("sdapi/v1/options", payload);
+            return response.IsSuccessStatusCode;
+        }
+
+        private async Task OnVaeChanged(string newVae)
+        {
+            if (_selectedVae == newVae) return;
+
+            _loadingVae = true;
+            _selectedVae = newVae;
+            StateHasChanged();
+            try { await SetVaeAsync(newVae); }
+            finally
+            {
+                _loadingVae = false;
+                StateHasChanged();
+            }
+        }
+
+        // Called when the LoRA tab's refresh button reloads models from disk: have the server rescan
+        // its VAE folder too, then re-pull the list so newly-added VAE files appear in the dropdown.
+        private async Task RefreshVaesFromDiskAsync()
+        {
+            try { await _httpClient.PostAsync("sdapi/v1/refresh-vae", null); } catch { }
+            await GetVaesAsync();
+            StateHasChanged();
         }
 
         public async Task GetSamplersAsync()

@@ -19,7 +19,7 @@
         <MudButton StartIcon="@Icons.Material.Filled.ClearAll" Variant="Variant.Outlined" Size="Size.Small"
                    OnClick="Clear">Clear</MudButton>
         <MudButton StartIcon="@Icons.Material.Filled.OpenInNew" Variant="Variant.Outlined" Size="Size.Small"
-                   Href="@ServerUrl" Target="_blank">Open UI</MudButton>
+                   OnClick="OpenUi">Open UI</MudButton>
     </div>
 
     <div class="d-flex align-center justify-space-between mb-1">
@@ -93,9 +93,24 @@
     private string BatchPath =>
         Configuration["SdServerBatchPath"] ?? "";
 
-    // The Gradio web UI is served at the same address as the API.
-    private string ServerUrl =>
-        Configuration["SdServerAddress"] ?? "";
+    // The Gradio web UI is served at the same address as the API. Read it fresh on click (not baked
+    // into an Href at render time) so it reflects the latest saved address even when this panel hasn't
+    // re-rendered — e.g. SD was started externally, so no managed-process log events refreshed it.
+    private async Task OpenUi()
+    {
+        var url = (Configuration["SdServerAddress"] ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            Snackbar.Add("Set the Stable Diffusion server address in Settings first.", Severity.Warning);
+            return;
+        }
+        // Tolerate an address typed without a scheme so window.open treats it as absolute.
+        if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            url = "http://" + url;
+
+        try { await JS.InvokeVoidAsync("open", url, "_blank", "noopener"); } catch { }
+    }
 
     private void Start()
     {

@@ -18,6 +18,7 @@ namespace SimpleDiffusion.Components
         [Inject] private WildcardService Wildcards { get; set; }
         [Inject] private UiPreferences Prefs { get; set; }   // per-device "Gallery image optimization" toggle
         [Inject] private HistoryService History { get; set; } = default!;
+        [Inject] private IConfiguration Configuration { get; set; } = default!; // NeverOOM flags
         private readonly Random _rng = new();
 
         private async Task SaveToGallery(int index)
@@ -183,6 +184,11 @@ namespace SimpleDiffusion.Components
                     // Resolve dynamic-prompt syntax ({a|b}, __wildcard__) fresh per image so a batch varies.
                     localRequest.prompt = DynamicPrompts.Resolve(promptOverride ?? _request.prompt, _rng, Wildcards.Get);
                     localRequest.negative_prompt = DynamicPrompts.Resolve(negativeOverride ?? _request.negative_prompt, _rng, Wildcards.Get);
+
+                    // Apply NeverOOM (reForge memory-safety) per send, merged with any ControlNet scripts.
+                    localRequest.alwayson_scripts = NeverOom.Merge(localRequest.alwayson_scripts,
+                        Configuration.Flag("NeverOomUnet", false), Configuration.Flag("NeverOomVae", false),
+                        NeverOom.EncoderTile(Configuration), NeverOom.DecoderTile(Configuration));
 
                     var response = await _httpClient.PostAsJsonAsync("sdapi/v1/txt2img", localRequest);
                     var result = await response.Content.ReadFromJsonAsync<Txt2ImgResponse>();

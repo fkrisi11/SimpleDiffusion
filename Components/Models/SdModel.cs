@@ -9,6 +9,14 @@
         public string Filename { get; set; }   // Full local path
     }
 
+    /// <summary>One installed VAE from <c>sdapi/v1/sd-vae</c>. The dropdown shows <see cref="model_name"/>;
+    /// "Automatic"/"None" are added by the UI (they aren't returned by the API).</summary>
+    public class SdVaeItem
+    {
+        public string model_name { get; set; } = "";
+        public string? filename { get; set; }
+    }
+
     public class UpscalerInfo
     {
         public string name { get; set; } = "";

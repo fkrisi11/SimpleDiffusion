@@ -32,6 +32,20 @@
     }
 </MudSelect>
 
+<MudSelect T="string" Label="VAE" Value="_selectedVae"
+           ValueChanged="OnVaeChanged" Variant="Variant.Filled"
+           Disabled="_loadingVae" Class="mt-2"
+           AdornmentIcon="@(_loadingVae ? Icons.Material.Filled.HourglassTop : "")">
+    @if (_loadingVae)
+    {
+        <MudProgressLinear Color="Color.Info" Indeterminate="true" Class="mb-2" />
+    }
+    @foreach (var v in Vaes)
+    {
+        <MudSelectItem Value="@v">@v</MudSelectItem>
+    }
+</MudSelect>
+
 <div style="margin-bottom: 2em" />
 
 <MudTabs ActivePanelIndex="_activeTabIndex" ActivePanelIndexChanged="OnTabChanged" Centered="true" Position="Position.Top" MinimumTabWidth="50px" ApplyEffectsToContainer="true" KeepPanelsAlive="true" PanelClass="=pa-6">
@@ -185,6 +199,7 @@
     <MudTabPanel Icon="@Icons.Material.Filled.Style" Text="LoRA">
         <SimpleDiffusion.Components.Tabs.LoraBrowser BaseLoraPath="@LoraPath"
                                                      OnLoraSelected="ToggleLoraInPrompt"
+                                                     OnModelsRefreshed="RefreshVaesFromDiskAsync"
                                                      SdHttpClient="_httpClient"/>
     </MudTabPanel>
 
