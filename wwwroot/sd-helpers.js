@@ -1918,6 +1918,42 @@ window.civPager = {
     }
 };
 
+// Global guard against the browser's default "open the dropped file" behaviour. Without this,
+// dropping an image ANYWHERE on the page (even over the img2img / upscale drop zones, but outside
+// the file-input square) makes the browser navigate away to view that file — losing all app state.
+// We block file drops everywhere except real <input type=file> targets (which accept the file
+// natively without navigating). Non-file drags — e.g. dragging selected text into a prompt field —
+// are left alone so normal editing still works.
+window.sdDropGuard = {
+    init: () => {
+        if (window.__sdDropGuard) return;
+        window.__sdDropGuard = true;
+
+        const isFileDrag = (e) => {
+            try {
+                const types = e.dataTransfer && e.dataTransfer.types;
+                if (!types) return false;
+                return types.includes ? types.includes("Files")
+                                      : Array.prototype.indexOf.call(types, "Files") >= 0;
+            } catch { return false; }
+        };
+
+        const guard = (e) => {
+            const t = e.target;
+            // A real file input handles the drop itself (no navigation) — let it through.
+            if (t && t.closest && t.closest('input[type="file"]')) return;
+            // Only file drops cause the navigate-away data loss; leave text/element drags alone.
+            if (!isFileDrag(e)) return;
+            e.preventDefault();
+        };
+
+        // dragover must also be cancelled, otherwise the drop event never fires as "prevented".
+        window.addEventListener("dragover", guard, false);
+        window.addEventListener("drop", guard, false);
+    }
+};
+window.sdDropGuard.init();
+
 window.sdDropHover = {
     attach: (element) => {
         if (!element) return;
